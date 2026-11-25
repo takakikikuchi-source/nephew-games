@@ -2,19 +2,27 @@
 // 万一に備えて、全部をファイルに書き出す／読み込む機能も持つ。
 const PREFIX = 'ng.';
 
+// 読めなかったときは、1つ前のデータ（.bak）から戻す
 export function load<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(PREFIX + key);
-    if (raw == null) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
+  for (const k of [PREFIX + key, PREFIX + key + '.bak']) {
+    try {
+      const raw = localStorage.getItem(k);
+      if (raw == null) continue;
+      return JSON.parse(raw) as T;
+    } catch {
+      // こわれていたら つぎを ためす
+    }
   }
+  return fallback;
 }
 
+// 書く前に、いまのデータを .bak に のこしておく
 export function save(key: string, value: unknown): void {
   try {
-    localStorage.setItem(PREFIX + key, JSON.stringify(value));
+    const json = JSON.stringify(value);
+    const prev = localStorage.getItem(PREFIX + key);
+    if (prev != null && prev !== json) localStorage.setItem(PREFIX + key + '.bak', prev);
+    localStorage.setItem(PREFIX + key, json);
   } catch {
     // 保存できなくても遊びは続けられるようにする
   }
@@ -23,6 +31,7 @@ export function save(key: string, value: unknown): void {
 export function remove(key: string): void {
   try {
     localStorage.removeItem(PREFIX + key);
+    localStorage.removeItem(PREFIX + key + '.bak');
   } catch {
     /* ignore */
   }

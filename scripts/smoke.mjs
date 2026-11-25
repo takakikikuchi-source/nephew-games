@@ -159,8 +159,7 @@ async function venom() {
 }
 
 try {
-  if (which === 'venom') await venom();
-  else {
+  {
     const mod = await import(pathToFileURL(path.join(root, 'scripts', `smoke-${which}.mjs`)).href);
     await mod.default({ page, shot, click, root, errors });
   }
