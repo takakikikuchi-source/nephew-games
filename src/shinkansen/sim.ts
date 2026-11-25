@@ -1,30 +1,22 @@
-// 運転のしくみ：加速・ブレーキ・ATC（運転台に出る制限速度）・時刻表・採点
-import {
-  ATC_STEPS,
-  SEGMENTS,
-  STATIONS,
-  STATION_POS,
-  VEHICLE,
-  courseStops,
-  segmentIndexAt,
-  type Course,
-} from './data';
+// 運転のしくみ：アクセル（マスコン）とブレーキの2本のレバー、ATC、時刻表、採点
+import { ATC_STEPS, SEGMENTS, STATION_POS, VEHICLE, courseStops, segmentIndexAt, type Course } from './data';
 
 export type Mode = 'easy' | 'normal' | 'hard';
 export type Phase = 'boarding' | 'ready' | 'running' | 'arrived' | 'done';
 
-// レバー：-8=非常 -7..-1=B7..B1 0=N 1..5=P1..P5
-export const NOTCH_MIN = -8;
-export const NOTCH_MAX = 5;
+export const POWER_MAX = 5; // P1〜P5
+export const BRAKE_MAX = 8; // B1〜B7、8=非常
 
-export function notchLabel(n: number): string {
-  if (n === -8) return 'ひじょう';
-  if (n < 0) return `B${-n}`;
-  if (n === 0) return 'N';
-  return `P${n}`;
+export function powerLabel(n: number): string {
+  return n === 0 ? 'きる' : `P${n}`;
+}
+export function brakeLabel(n: number): string {
+  if (n === 0) return 'ゆるめ';
+  if (n === BRAKE_MAX) return 'ひじょう';
+  return `B${n}`;
 }
 
-const ATC_DECEL = 0.62; // m/s² ATCが想定するブレーキの強さ
+const ATC_DECEL = 0.9; // m/s² ATCが想定するブレーキの強さ
 
 export interface StopRecord {
   station: number;
@@ -47,9 +39,13 @@ function resistance(kmh: number): number {
   return kmh <= 0 ? 0 : 0.02 + kmh * kmh * 0.000004;
 }
 
-function powerAccel(notch: number, kmh: number): number {
-  const base = VEHICLE.powerAccel[notch] ?? 0;
-  return base * Math.max(0.15, Math.min(1, (320 - kmh) / 200));
+function powerAccel(p: number, kmh: number): number {
+  const base = VEHICLE.powerAccel[p] ?? 0;
+  return base * Math.max(0.25, Math.min(1, (330 - kmh) / 220));
+}
+
+function brakeDecel(b: number): number {
+  return b >= BRAKE_MAX ? VEHICLE.emergencyDecel : VEHICLE.brakeDecel[b] ?? 0;
 }
 
 function stepPhys(p: Phys, cmd: number, dt: number): void {
@@ -90,9 +86,8 @@ export class Sim {
   readonly stops: number[];
   next = 1; // stops[next] が次にとまる駅
   p: Phys;
-  notch = -7;
-  easyGo = false;
-  easyStop = false;
+  power = 0;
+  brake = 7;
   time = 0;
   phase: Phase = 'boarding';
   doorsOpen = true;
@@ -102,9 +97,10 @@ export class Sim {
   legHarsh = 0;
   legAnnounced = false;
   private harshLatched = false;
+  private shortWarned = false;
+  private stoppedFor = 0;
   schedule: { arr: number; dep: number }[] = [];
   records: StopRecord[] = [];
-  passengers = 0;
   onAtcChange: ((limit: number) => void) | null = null;
   onOverspeed: (() => void) | null = null;
   onShortStop: (() => void) | null = null;
@@ -140,15 +136,14 @@ export class Sim {
   }
   canAnnounce(): boolean {
     const d = this.distToStop();
-    return this.phase === 'running' && !this.legAnnounced && d < 4000 && d > 300;
+    return this.phase === 'running' && !this.legAnnounced && d < 4500 && d > 300;
   }
 
   // 時刻表：上手な運転士が走った時間＋すこし余裕
   private buildSchedule(): void {
     const DWELL = 30;
-    let t = 0;
+    let t = DWELL;
     this.schedule = [{ arr: 0, dep: DWELL }];
-    t = DWELL;
     for (let k = 1; k < this.stops.length; k++) {
       const stop = STATION_POS[this.stops[k]];
       const p: Phys = { s: STATION_POS[this.stops[k - 1]], kmh: 0, acc: 0 };
@@ -159,8 +154,8 @@ export class Sim {
         const d = stop - p.s;
         let cmd: number;
         const need = d > 0.5 ? (p.kmh / 3.6) ** 2 / (2 * d) : 9; // m/s²
-        if (need > 0.55 || d < 1) cmd = -VEHICLE.brakeDecel[Math.min(7, Math.max(2, Math.ceil((need * 3.6) / 0.6)))];
-        else if (p.kmh > lim - 3) cmd = -VEHICLE.brakeDecel[2];
+        if (need > 0.8 || d < 1) cmd = -brakeDecel(Math.min(7, Math.max(2, Math.ceil((need * 3.6) / 0.7))));
+        else if (p.kmh > lim - 3) cmd = -brakeDecel(2);
         else if (p.kmh < lim - 8) cmd = powerAccel(4, p.kmh);
         else cmd = 0;
         stepPhys(p, cmd, dt);
@@ -173,8 +168,11 @@ export class Sim {
     }
   }
 
-  setNotch(n: number): void {
-    this.notch = Math.max(NOTCH_MIN, Math.min(NOTCH_MAX, n));
+  setPower(n: number): void {
+    this.power = Math.max(0, Math.min(POWER_MAX, n));
+  }
+  setBrake(n: number): void {
+    this.brake = Math.max(0, Math.min(BRAKE_MAX, n));
   }
 
   update(dt: number): void {
@@ -188,40 +186,43 @@ export class Sim {
     }
     const kmh = this.p.kmh;
     let cmd = 0;
+    // ブレーキが少しでも入っていれば、アクセルはきかない（本物と同じ）
+    if (this.brake > 0) cmd = -brakeDecel(this.brake);
+    else if (this.power > 0 && !this.doorsOpen) cmd = powerAccel(this.power, kmh);
+
     if (this.mode === 'easy') {
-      // かんたん：すすむ＝加速（制限速度で自動で止める）、とまる＝ブレーキ
-      if (this.easyStop) cmd = -VEHICLE.brakeDecel[5];
-      else if (this.easyGo && kmh < lim - 4) cmd = powerAccel(4, kmh);
-      if (kmh > lim + 0.5) cmd = Math.min(cmd, -VEHICLE.brakeDecel[lim === 0 ? 7 : 4]);
-      this.notch = this.easyStop ? -5 : this.easyGo ? 4 : 0;
+      // かんたん：ATCが自動で速度を守る（減点なし）
+      if (kmh > lim - 2 && cmd > 0) cmd = 0;
+      if (kmh > lim + 0.5) cmd = Math.min(cmd, -brakeDecel(lim === 0 ? 7 : 4));
     } else {
-      if (this.notch > 0 && !this.doorsOpen) cmd = powerAccel(this.notch, kmh);
-      else if (this.notch < 0) cmd = -(this.notch === -8 ? VEHICLE.emergencyDecel : VEHICLE.brakeDecel[-this.notch]);
-      // ATC：制限速度をこえると自動でブレーキ
       if (kmh > lim + 1.5 && !this.atcBraking) {
         this.atcBraking = true;
         this.legAtc++;
         this.onOverspeed?.();
       }
       if (this.atcBraking) {
-        cmd = Math.min(cmd, -VEHICLE.brakeDecel[lim === 0 ? 7 : 6]);
+        cmd = Math.min(cmd, -brakeDecel(lim === 0 ? 7 : 6));
         if (kmh <= Math.max(0, lim - 3)) this.atcBraking = false;
       }
-      if (this.notch === -8 && kmh > 30 && !this.harshLatched) {
-        this.legHarsh++;
-        this.harshLatched = true;
-      }
-      if (this.notch !== -8) this.harshLatched = false;
     }
+    if (this.brake === BRAKE_MAX && kmh > 30 && !this.harshLatched) {
+      this.legHarsh++;
+      this.harshLatched = true;
+    }
+    if (this.brake !== BRAKE_MAX) this.harshLatched = false;
+
     stepPhys(this.p, cmd, dt);
     if (this.p.kmh <= 0.01 && stop != null && cmd <= 0) {
       const d = stop - this.p.s;
       this.stoppedFor += dt;
       if (d > 60) {
-        // 手前すぎ：止まって1秒たったら知らせる
+        // 止まったままなら、6秒ごとにもう一度知らせる
         if (this.stoppedFor > 1 && !this.shortWarned) {
           this.shortWarned = true;
           this.onShortStop?.();
+        } else if (this.stoppedFor > 7) {
+          this.stoppedFor = 1;
+          this.shortWarned = false;
         }
       } else {
         this.arrive(d);
@@ -231,8 +232,6 @@ export class Sim {
       if (this.p.kmh > 3) this.shortWarned = false;
     }
   }
-  private shortWarned = false;
-  private stoppedFor = 0;
 
   private arrive(d: number): void {
     const mode = this.mode;
@@ -240,13 +239,12 @@ export class Sim {
     const th = mode === 'easy' ? [3, 6, 10, 20, 35] : mode === 'normal' ? [0.5, 1, 2, 5, 10] : [0.3, 0.6, 1.2, 3, 6];
     const pts = [40, 36, 32, 25, 15];
     const labels = ['ぴったり！', 'すごい！', 'いいね！', 'おしい！', 'もうすこし！'];
-    let i = th.findIndex((x) => ad <= x);
+    const i = th.findIndex((x) => ad <= x);
     let stopScore = i >= 0 ? pts[i] : 5;
     let stopLabel = i >= 0 ? labels[i] : d < 0 ? 'いきすぎ…' : 'てまえ…';
     if (d < -30 && mode !== 'easy') {
       stopScore = 0;
       stopLabel = 'オーバーラン…';
-      i = -1;
     }
     let timeDiff: number | null = null;
     let timeScore = 30;
@@ -270,7 +268,8 @@ export class Sim {
     });
     this.phase = 'arrived';
     this.atcBraking = false;
-    this.notch = Math.min(this.notch, -4);
+    this.power = 0;
+    this.brake = Math.max(this.brake, 4);
   }
 
   announce(): void {
@@ -278,8 +277,7 @@ export class Sim {
   }
 
   openDoors(): boolean {
-    if (this.p.kmh > 0.01 || this.doorsOpen) return false;
-    if (this.phase !== 'arrived') return false;
+    if (this.p.kmh > 0.01 || this.doorsOpen || this.phase !== 'arrived') return false;
     this.doorsOpen = true;
     this.phase = this.isLast() ? 'done' : 'boarding';
     return true;
@@ -293,15 +291,14 @@ export class Sim {
   }
 
   depart(): void {
-    if (this.phase === 'ready') {
-      if (this.records.length > 0) this.next++;
-      this.phase = 'running';
-      this.legAtc = 0;
-      this.legHarsh = 0;
-      this.legAnnounced = false;
-      this.atcLimit = atcLimitAt(this.p.s, this.stopPos());
-      this.onAtcChange?.(this.atcLimit);
-    }
+    if (this.phase !== 'ready') return;
+    if (this.records.length > 0) this.next++;
+    this.phase = 'running';
+    this.legAtc = 0;
+    this.legHarsh = 0;
+    this.legAnnounced = false;
+    this.atcLimit = atcLimitAt(this.p.s, this.stopPos());
+    this.onAtcChange?.(this.atcLimit);
   }
 
   totalScore(): { avg: number; stars: number } {
@@ -309,15 +306,10 @@ export class Sim {
     const avg = this.records.reduce((a, r) => a + r.score, 0) / this.records.length;
     return { avg: Math.round(avg), stars: avg >= 85 ? 3 : avg >= 60 ? 2 : 1 };
   }
-
-  stationName(i: number): string {
-    return STATIONS[i].yomi;
-  }
 }
 
 export function fmtClock(sec: number, withSec: boolean): string {
-  const base = 10 * 3600;
-  const t = Math.max(0, Math.floor(base + sec));
+  const t = Math.max(0, Math.floor(10 * 3600 + sec));
   const h = Math.floor(t / 3600) % 24;
   const m = Math.floor((t % 3600) / 60);
   const s = t % 60;

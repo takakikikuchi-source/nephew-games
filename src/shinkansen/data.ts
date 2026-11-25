@@ -63,7 +63,7 @@ export const SEGMENTS: Segment[] = [
 // ゲームでの距離（m）
 export function segmentLength(i: number): number {
   const real = STATIONS[i + 1].realKm - STATIONS[i].realKm;
-  return Math.round(2400 + real * 90);
+  return Math.round(3000 + real * 105);
 }
 
 // 各駅の停止位置（ルートの先頭からの距離 m）。最初の駅の前に 600m の余白を作る
@@ -114,13 +114,13 @@ export const VEHICLE = {
   maxSpeed: 285,
   cars: 16,
   length: 400,
-  powerAccel: [0, 0.6, 1.2, 1.9, 2.6, 3.3],
-  brakeDecel: [0, 0.6, 1.2, 1.8, 2.4, 3.0, 3.6, 4.2],
-  emergencyDecel: 5.2,
+  powerAccel: [0, 0.9, 1.8, 2.7, 3.6, 4.5],
+  brakeDecel: [0, 0.8, 1.5, 2.2, 2.9, 3.6, 4.3, 5.0],
+  emergencyDecel: 6.0,
 };
 
 // ATC の表示に使う速度の段
-export const ATC_STEPS = [285, 270, 255, 230, 200, 170, 120, 70, 30, 0];
+export const ATC_STEPS = [285, 270, 255, 230, 210, 160, 110, 70, 30, 0];
 
 // 区間ごとの最高速度（停車駅の前後はATCで下がる）
 export function segmentIndexAt(s: number): number {
