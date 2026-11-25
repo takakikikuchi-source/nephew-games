@@ -1,0 +1,20 @@
+{
+  "name": "nephew-games",
+  "version": "1.0.0",
+  "private": true,
+  "description": "甥っ子たちのためのゲーム（ベノムモンスター、新幹線うんてんし）",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "check": "tsc --noEmit -p .",
+    "test": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.65.1",
+    "three": "^0.187.0",
+    "typescript": "^7.0.2"
+  }
+}

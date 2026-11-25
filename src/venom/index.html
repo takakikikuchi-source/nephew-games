@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ベノムモンスター</title>
+<style>
+:root{
+  --bg:#17122b; --panel:#251d42; --panel2:#30265a; --ink:#fff; --sub:#c9bdf0;
+  --accent:#9cff57; --accent2:#ff6bd6; --warn:#ffb347; --bad:#ff6b6b; --coin:#ffd43b;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+  font-family:"BIZ UDPGothic","BIZ UDGothic","Yu Gothic UI","Meiryo",sans-serif;overflow:hidden;user-select:none}
+button{font-family:inherit;cursor:pointer}
+rt{font-size:.5em}
+.screen{position:absolute;inset:0;display:none;flex-direction:column}
+.screen.on{display:flex}
+
+.btn{font-size:20px;font-weight:700;padding:12px 22px;border-radius:16px;border:none;background:#fff;color:#2b2150;
+  box-shadow:0 5px 0 #b9add9;transition:transform .08s}
+.btn:active{transform:translateY(4px);box-shadow:0 1px 0 #b9add9}
+.btn.primary{background:var(--accent);color:#1a3300;box-shadow:0 5px 0 #5c9e2c}
+.btn.pink{background:var(--accent2);color:#3b0030;box-shadow:0 5px 0 #b0368f}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+
+/* タイトル */
+#s-title{align-items:center;justify-content:center;gap:28px;
+  background:radial-gradient(circle at 50% 40%,#3b2a7a,#17122b 70%)}
+.logo{font-size:clamp(48px,8vw,96px);font-weight:900;letter-spacing:.04em;margin:0;
+  background:linear-gradient(180deg,#d4ff7a,#6be33a 55%,#2f8f1a);-webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 6px 0 #3a1f6e) drop-shadow(0 0 24px rgba(156,255,87,.35))}
+.logo-sub{font-size:clamp(18px,2.4vw,26px);color:var(--sub);margin:0}
+.title-art{display:flex;gap:8px}
+.title-art .mini{width:clamp(70px,10vw,120px);animation:bob 2.4s ease-in-out infinite}
+.title-art .mini:nth-child(2){animation-delay:.4s}.title-art .mini:nth-child(3){animation-delay:.8s}
+
+#s-profile{align-items:center;justify-content:center;background:radial-gradient(circle at 50% 40%,#3b2a7a,#17122b 70%)}
+#s-profile .pp-title{color:#fff}
+
+/* 上のバー */
+.topbar{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);border-bottom:3px solid #3a2f6b;flex-wrap:wrap}
+.topbar .who{font-size:20px;font-weight:700;display:flex;align-items:center;gap:8px}
+.topbar .chip{background:var(--panel2);border-radius:999px;padding:6px 14px;font-size:20px;font-weight:700}
+.topbar .chip.coin{color:var(--coin)}
+.topbar .spacer{flex:1}
+.topbar .tb{font-size:17px;padding:8px 14px;border-radius:12px;border:none;background:var(--panel2);color:#fff;font-weight:700}
+.topbar .tb:hover{background:#3d3175}
+
+/* ホーム */
+.home-main{flex:1;display:flex;gap:16px;padding:16px;min-height:0}
+.habitat{position:relative;flex:1.5;border-radius:24px;overflow:hidden;min-height:0;box-shadow:inset 0 0 0 4px rgba(255,255,255,.15)}
+.hab-desert{background:linear-gradient(#ffe2a8,#f3b562 55%,#d99a4e)}
+.hab-town{background:repeating-linear-gradient(0deg,rgba(0,0,0,.06) 0 2px,transparent 2px 46px),repeating-linear-gradient(90deg,rgba(0,0,0,.06) 0 2px,transparent 2px 92px),linear-gradient(#d7dbe0,#a3abb4 60%,#79818b)}
+.hab-forest{background:linear-gradient(#cfeac4,#7fbf72 55%,#477f3c)}
+.hab-rainforest{background:linear-gradient(#b7efb0,#45a873 55%,#1f6f4a)}
+.hab-okinawa{background:linear-gradient(#c7f2dc,#62c393 55%,#2c7c57)}
+.hab-jungle{background:linear-gradient(#dcf3b0,#86b94c 55%,#456f22)}
+.hab-egg{background:radial-gradient(circle at 50% 70%,#ffe9c7,#f4c58a 60%,#c98d4c)}
+.deco{position:absolute;font-size:clamp(34px,5vw,60px);opacity:.85;pointer-events:none}
+.creature{position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);cursor:pointer;transition:filter .3s}
+.creature svg{width:100%;height:100%;display:block;filter:drop-shadow(0 10px 8px rgba(0,0,0,.25))}
+.creature .bob{width:100%;height:100%;animation:bob 2.6s ease-in-out infinite}
+.creature.egg .bob{animation:wobble 2.2s ease-in-out infinite}
+.creature.s1{width:28%}.creature.s2{width:38%}.creature.s3{width:50%}.creature.s0{width:30%}
+.creature.happy .bob{animation:hop .5s ease-out 2}
+.name-tag{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);background:rgba(20,14,40,.75);padding:8px 18px;border-radius:999px;
+  font-size:20px;font-weight:700;white-space:nowrap}
+.bubble{position:absolute;left:50%;top:12px;transform:translateX(-50%);background:#fff;color:#2b2150;padding:10px 18px;border-radius:18px;
+  font-size:19px;font-weight:700;white-space:nowrap;box-shadow:0 4px 0 rgba(0,0,0,.15)}
+.poop{position:absolute;font-size:clamp(30px,4vw,48px);background:none;border:none;padding:0;transform:translate(-50%,-50%);animation:bob 1.8s ease-in-out infinite}
+.heart{position:absolute;font-size:34px;pointer-events:none;animation:floatup 1s ease-out forwards}
+.blb{position:absolute;right:14px;top:14px;font-size:16px;padding:8px 12px;border-radius:12px;border:none;background:rgba(20,14,40,.75);color:#fff;font-weight:700}
+.habitat.blacklight{background:radial-gradient(circle,#2a1650,#0b0518 75%) !important}
+.habitat.blacklight .deco{opacity:.15}
+.habitat.blacklight .creature svg{filter:grayscale(1) brightness(1.6) sepia(1) hue-rotate(120deg) saturate(5) drop-shadow(0 0 14px #5fffe0)}
+
+.panel{flex:1;background:var(--panel);border-radius:24px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:320px;overflow:auto}
+.daybox{display:flex;justify-content:space-between;align-items:center;font-size:20px;font-weight:700}
+.bar{display:grid;grid-template-columns:96px 1fr 44px;align-items:center;gap:8px;font-size:18px;font-weight:700}
+.bar .track{height:18px;background:#120d24;border-radius:999px;overflow:hidden}
+.bar .fill{height:100%;border-radius:999px;transition:width .4s}
+.stats4{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;font-size:16px;color:var(--sub);background:var(--panel2);padding:10px 14px;border-radius:14px}
+.stats4 b{color:#fff;font-size:18px}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:auto}
+.act{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:700;padding:12px 14px;border-radius:16px;border:none;background:#fff;color:#2b2150;box-shadow:0 5px 0 #b9add9}
+.act:active{transform:translateY(4px);box-shadow:0 1px 0 #b9add9}
+.act .ic{font-size:28px}
+.act.sleep{background:#4c3d99;color:#fff;box-shadow:0 5px 0 #2c2266}
+.act.battle{background:#ff8787;color:#3b0000;box-shadow:0 5px 0 #b33939}
+.act.lab{background:#b197fc;color:#1d0b4f;box-shadow:0 5px 0 #6f52c9}
+.act.gacha{background:var(--coin);color:#4a3500;box-shadow:0 5px 0 #b38f00}
+.act:disabled{opacity:.4}
+.hint{font-size:15px;color:var(--sub);text-align:center}
+
+/* 汎用の画面 */
+.page{flex:1;overflow:auto;padding:20px;display:flex;flex-direction:column;gap:16px;align-items:center}
+.page h2{margin:0;font-size:30px}
+.cards{display:flex;flex-wrap:wrap;gap:16px;justify-content:center}
+.card{background:var(--panel);border-radius:20px;padding:14px;width:220px;display:flex;flex-direction:column;align-items:center;gap:8px;border:3px solid transparent}
+.card.sel{border-color:var(--accent)}
+.card .pic{width:150px;height:150px}
+.card .pic svg{width:100%;height:100%}
+.card .ttl{font-size:20px;font-weight:700;text-align:center}
+.card .sub{font-size:15px;color:var(--sub);text-align:center;line-height:1.6}
+.locked svg{filter:brightness(0) opacity(.5)}
+
+/* ガチャ */
+.machine{width:min(360px,60vw);aspect-ratio:3/4;position:relative;display:flex;align-items:center;justify-content:center}
+.machine .dome{position:absolute;top:0;left:10%;width:80%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.7),rgba(170,140,255,.35) 40%,rgba(80,50,160,.6));border:6px solid #cbbcff}
+.machine .base{position:absolute;bottom:0;left:5%;width:90%;height:48%;border-radius:24px 24px 30px 30px;background:linear-gradient(#ff6bd6,#c2338f);border:6px solid #ffc2ec}
+.machine .slot{position:absolute;bottom:12%;left:50%;transform:translateX(-50%);width:40%;height:18%;border-radius:14px;background:#5a1446}
+.machine .knob{position:absolute;bottom:22%;right:12%;width:56px;height:56px;border-radius:50%;background:#ffd43b;border:5px solid #b38f00}
+.machine.spin .knob{animation:spin .6s linear 2}
+.balls span{position:absolute;font-size:34px}
+.gacha-egg{width:200px;height:200px;animation:drop .6s cubic-bezier(.3,1.6,.6,1)}
+.gacha-egg svg{width:100%;height:100%}
+.gacha-egg.shake{animation:wobble .5s ease-in-out 3}
+
+/* どくラボ */
+.lab-wrap{display:flex;gap:18px;flex-wrap:wrap;justify-content:center;width:100%}
+.motos{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}
+.moto{background:var(--panel);border-radius:18px;padding:12px 14px;border:4px solid var(--tc);display:flex;flex-direction:column;gap:6px}
+.moto .head{display:flex;align-items:center;gap:8px;font-size:21px;font-weight:700}
+.moto .cnt{margin-left:auto;font-size:24px;color:var(--tc)}
+.moto .desc{font-size:14px;color:var(--sub);line-height:1.7}
+.moto .row{display:flex;gap:8px}
+.moto button{flex:1;font-size:15px;padding:8px;border-radius:12px;border:none;font-weight:700}
+.flask{background:var(--panel);border-radius:24px;padding:18px;display:flex;flex-direction:column;align-items:center;gap:14px;min-width:300px}
+.slots{display:flex;align-items:center;gap:12px;font-size:28px}
+.slotx{width:96px;height:96px;border-radius:20px;border:4px dashed #6b5bb0;display:flex;align-items:center;justify-content:center;font-size:44px;background:#1b1535}
+.pot{font-size:72px}
+.pot.brew{animation:brew .4s ease-in-out 4}
+.movelist{display:flex;flex-direction:column;gap:6px;width:100%}
+.mv{display:flex;align-items:center;gap:8px;background:var(--panel2);border-radius:12px;padding:8px 12px;font-size:17px;font-weight:700}
+.mv .tps{margin-left:auto;font-size:20px}
+
+/* バトル */
+#s-battle .arena{flex:1;position:relative;overflow:hidden}
+.fighter{position:absolute;display:flex;flex-direction:column;align-items:center;gap:8px}
+.fighter .pic{width:clamp(170px,24vw,300px);aspect-ratio:1}
+.fighter .pic svg{width:100%;height:100%;filter:drop-shadow(0 10px 8px rgba(0,0,0,.3))}
+.fighter.boss{right:8%;top:6%}
+.fighter.me{left:8%;bottom:4%}
+.fighter.me .pic svg{transform:scaleX(-1)}
+.hpbox{background:rgba(20,14,40,.85);padding:8px 14px;border-radius:14px;min-width:240px}
+.hpbox .nm{font-size:19px;font-weight:700;display:flex;justify-content:space-between}
+.hpbox .track{height:16px;background:#120d24;border-radius:999px;overflow:hidden;margin-top:6px}
+.hpbox .fill{height:100%;background:linear-gradient(90deg,#69db7c,#40c057);transition:width .5s}
+.hpbox .fill.low{background:linear-gradient(90deg,#ffa94d,#fd7e14)}
+.hpbox .fill.crit{background:linear-gradient(90deg,#ff8787,#fa5252)}
+.marks{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;min-height:22px}
+.marks span{font-size:13px;padding:2px 8px;border-radius:999px;color:#fff;font-weight:700}
+.shake{animation:shake .35s}
+.flash{animation:flash .35s}
+.bpanel{background:var(--panel);padding:14px 18px;display:flex;gap:16px;align-items:stretch;border-top:3px solid #3a2f6b}
+.msg{flex:1;background:#fff;color:#2b2150;border-radius:16px;padding:14px 18px;font-size:22px;font-weight:700;min-height:86px;line-height:1.7}
+.bmoves{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-width:min(520px,50vw)}
+.bmove{font-size:18px;font-weight:700;padding:10px;border-radius:14px;border:none;background:#fff;color:#2b2150;box-shadow:0 4px 0 #b9add9;display:flex;align-items:center;gap:6px;justify-content:center}
+.bmove:disabled{opacity:.4}
+.dmg{position:absolute;font-size:40px;font-weight:900;color:#fff;-webkit-text-stroke:2px #c92a2a;pointer-events:none;animation:floatup 1s ease-out forwards}
+
+/* トレーニング */
+.tbar{position:relative;width:min(560px,80vw);height:48px;background:#120d24;border-radius:999px;overflow:hidden;margin:18px auto}
+.tzone{position:absolute;top:0;bottom:0;border-radius:6px}
+.tmark{position:absolute;top:-4px;bottom:-4px;width:10px;margin-left:-5px;background:#fff;border-radius:6px;box-shadow:0 0 10px #fff}
+.tres{font-size:24px;font-weight:700;min-height:36px;text-align:center}
+.statpick{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+/* 図鑑 */
+.tabs{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.tab{font-size:19px;font-weight:700;padding:10px 18px;border-radius:14px;border:none;background:var(--panel2);color:#fff}
+.tab.on{background:var(--accent);color:#1a3300}
+.zk-detail{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap}
+.zk-detail .bigpic{width:220px;height:220px;background:#f6f0ff;border-radius:20px}
+.zk-detail .bigpic svg{width:100%;height:100%}
+.zk-text{flex:1;min-width:260px;font-size:19px;line-height:1.9;color:#222}
+.zk-text .fact{background:#f1ecff;border-radius:12px;padding:8px 12px;margin:6px 0}
+.zk-text .truth{background:#fff4d6;border-radius:12px;padding:8px 12px;margin:6px 0}
+.zk-text .safe{background:#ffe3e3;border-radius:12px;padding:8px 12px;margin:6px 0;font-weight:700}
+
+.dlg .btn{background:#efe9ff}
+.dlg .btn.primary{background:var(--accent)}
+.dlg .zk-text,.dlg .dlg-body{color:#222}
+.night{position:fixed;inset:0;background:#0b0820;display:flex;align-items:center;justify-content:center;font-size:96px;z-index:800;animation:fadein .4s}
+.toggle{display:flex;align-items:center;justify-content:space-between;gap:20px;font-size:20px;background:var(--panel);padding:12px 18px;border-radius:14px;width:min(520px,90vw)}
+
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+@keyframes wobble{0%,100%{transform:rotate(0)}25%{transform:rotate(-6deg)}75%{transform:rotate(6deg)}}
+@keyframes hop{0%{transform:translateY(0)}40%{transform:translateY(-30px)}100%{transform:translateY(0)}}
+@keyframes floatup{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-70px)}}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-10px)}75%{transform:translateX(10px)}}
+@keyframes flash{50%{filter:brightness(2.2)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes drop{0%{transform:translateY(-120px) scale(.6);opacity:0}100%{transform:translateY(0) scale(1);opacity:1}}
+@keyframes brew{0%,100%{transform:rotate(0) scale(1)}50%{transform:rotate(8deg) scale(1.1)}}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+@media (max-width:900px){.home-main{flex-direction:column}.panel{min-width:0}}
+</style>
+</head>
+<body>
+<div id="app">
+  <section id="s-title" class="screen on"></section>
+  <section id="s-profile" class="screen"></section>
+  <section id="s-home" class="screen"></section>
+  <section id="s-gacha" class="screen"></section>
+  <section id="s-lab" class="screen"></section>
+  <section id="s-boss" class="screen"></section>
+  <section id="s-battle" class="screen"></section>
+  <section id="s-nakama" class="screen"></section>
+  <section id="s-zukan" class="screen"></section>
+  <section id="s-settings" class="screen"></section>
+</div>
+<!--APP-->
+</body>
+</html>
