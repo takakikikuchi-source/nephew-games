@@ -1,0 +1,92 @@
+<title>甥っ子ゲーム</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@800&display=swap">
+<style>
+/* Layout: one centered column — a short header, then two big game "tickets" side by side that stack on phones */
+:root {
+  --bg: #eef3f8;
+  --fg: #16233a;
+  --muted: #55657d;
+  --card: #ffffff;
+  --line: #d3dce7;
+  --venom: #5b3cc4;
+  --venom-2: #2a1a6b;
+  --venom-ink: #b6ff6a;
+  --shin: #1c6fd1;
+  --shin-2: #0b3f80;
+  --shin-ink: #ffe066;
+  --font-display: "M PLUS Rounded 1c", "BIZ UDPGothic", "Hiragino Maru Gothic ProN", "Meiryo", sans-serif;
+  --font-body: "BIZ UDPGothic", "Hiragino Sans", "Meiryo", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #0f1726; --fg: #e8eef7; --muted: #9fb0c8; --card: #18243a; --line: #2a3a55; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #0f1726; --fg: #e8eef7; --muted: #9fb0c8; --card: #18243a; --line: #2a3a55; color-scheme: dark; }
+
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 920px; margin: 0 auto; padding-block: 40px 48px; display: flex; flex-direction: column; gap: 28px; }
+header { display: flex; flex-direction: column; gap: 8px; }
+h1 { margin: 0; font-family: var(--font-display); font-weight: 800; font-size: clamp(28px, 5vw, 44px); letter-spacing: .02em; text-wrap: balance; }
+.lead { margin: 0; color: var(--muted); font-size: 16px; line-height: 1.8; }
+
+.games { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+.game {
+  position: relative; display: flex; flex-direction: column; gap: 14px; min-width: 0;
+  padding: 26px 24px 22px; border-radius: 22px; text-decoration: none; color: #fff;
+  box-shadow: 0 10px 0 rgba(0,0,0,.18); transition: transform .12s ease;
+}
+.game:hover { transform: translateY(-3px); }
+.game:focus-visible { outline: 4px solid var(--fg); outline-offset: 4px; }
+.venom { background: linear-gradient(160deg, var(--venom), var(--venom-2)); }
+.shin { background: linear-gradient(160deg, var(--shin), var(--shin-2)); }
+.who { align-self: flex-start; font-size: 13px; font-weight: 700; letter-spacing: .08em; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,.16); }
+.name { font-family: var(--font-display); font-weight: 800; font-size: clamp(26px, 3.6vw, 34px); line-height: 1.25; }
+.venom .name { color: var(--venom-ink); }
+.shin .name { color: var(--shin-ink); }
+.desc { font-size: 15px; line-height: 1.8; color: rgba(255,255,255,.88); }
+.play { margin-top: auto; align-self: flex-start; font-weight: 800; font-size: 18px; padding: 10px 22px; border-radius: 14px; background: #fff; }
+.venom .play { color: var(--venom-2); }
+.shin .play { color: var(--shin-2); }
+.art { position: absolute; right: 18px; top: 14px; font-size: 52px; line-height: 1; opacity: .9; }
+
+.notes { border-top: 1px solid var(--line); padding-top: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 14px; line-height: 1.8; }
+.notes b { color: var(--fg); }
+@media (prefers-reduced-motion: reduce) { .game { transition: none; } .game:hover { transform: none; } }
+</style>
+
+<main>
+  <header>
+    <h1>どれで あそぶ？</h1>
+    <p class="lead">クリックすると ゲームが はじまります。おとが でるので、おとの おおきさに きを つけてね。</p>
+  </header>
+
+  <div class="games">
+    <a class="game venom" href="venom.html">
+      <span class="art" aria-hidden="true">🦂</span>
+      <span class="who">おにいちゃん むけ</span>
+      <span class="name">ベノムモンスター</span>
+      <span class="desc">ほんものの どく いきものを たまごから そだてて、どくを まぜて、つよい ボスと たたかおう。</span>
+      <span class="play">あそぶ ▶</span>
+    </a>
+    <a class="game shin" href="shinkansen.html">
+      <span class="art" aria-hidden="true">🚄</span>
+      <span class="who">おとうと むけ</span>
+      <span class="name">しんかんせん うんてんし</span>
+      <span class="desc">うんてんせきから とうかいどうしんかんせんを うんてん。えきに ぴったり とめよう。</span>
+      <span class="play">あそぶ ▶</span>
+    </a>
+  </div>
+
+  <div class="notes">
+    <span><b>おためし版です。</b>このページで遊んだセーブは、このブラウザの中だけに残ります（甥っ子さんのPCのセーブとは別です）。</span>
+    <span>このページでは「なまえを かえる」「セーブを ファイルに ほぞん」は使えません。PCに入れた版では使えます。</span>
+    <span>しんかんせんの操作：↑ で加速、↓ でブレーキ、D でドア、A でアナウンス、スペースで警笛。</span>
+  </div>
+</main>

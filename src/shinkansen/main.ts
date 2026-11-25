@@ -70,7 +70,8 @@ function renderTitle(): void {
   el.innerHTML = `
     <div class="title-train">🚄</div>
     <h1 class="logo">しんかんせん<br>うんてんし</h1>
-    <button class="btn primary big" id="start">はじめる</button>`;
+    <button class="btn primary big" id="start">はじめる</button>
+    <a href="index.html" style="color:#d0ebff;font-size:16px">◀ ほかの ゲーム</a>`;
   el.querySelector<HTMLButtonElement>('#start')!.onclick = () => {
     unlockAudio();
     sfx('good');

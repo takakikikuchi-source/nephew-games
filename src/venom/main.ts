@@ -130,7 +130,8 @@ function renderTitle(): void {
     </div>
     <h1 class="logo">ベノムモンスター</h1>
     <p class="logo-sub">もうどく いきもの いくせいゲーム</p>
-    <button class="btn primary" id="start" style="font-size:28px;padding:16px 48px">はじめる</button>`;
+    <button class="btn primary" id="start" style="font-size:28px;padding:16px 48px">はじめる</button>
+    <a href="index.html" style="color:#c9bdf0;font-size:16px">◀ ほかの ゲーム</a>`;
   scr('s-title').querySelector<HTMLButtonElement>('#start')!.onclick = () => {
     unlockAudio();
     sfx('good');
