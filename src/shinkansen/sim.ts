@@ -191,9 +191,11 @@ export class Sim {
     else if (this.power > 0 && !this.doorsOpen) cmd = powerAccel(this.power, kmh);
 
     if (this.mode === 'easy') {
-      // かんたん：ATCが自動で速度を守る（減点なし）
+      // かんたん：ATCが自動で速度を守る（減点なし）。止まる位置を過ぎたら しっかり止める
+      const d = stop != null ? stop - this.p.s : Infinity;
       if (kmh > lim - 2 && cmd > 0) cmd = 0;
       if (kmh > lim + 0.5) cmd = Math.min(cmd, -brakeDecel(lim === 0 ? 7 : 4));
+      if (d < 2 && kmh > 0.01) cmd = -brakeDecel(7);
     } else {
       if (kmh > lim + 1.5 && !this.atcBraking) {
         this.atcBraking = true;

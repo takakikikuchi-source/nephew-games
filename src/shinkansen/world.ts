@@ -1,15 +1,12 @@
-﻿// 運転席から見える3Dの世界。1kmごとの「チャンク」に分けて、近くだけ作る。
+// 運転席から見える3Dの世界。1kmごとの「チャンク」に分けて、近くだけ作る。
+// 空（Sky）・太陽の影・写真の素材（CC0）で、なるべく本物に近い見た目にする。
 import * as THREE from 'three';
-import {
-  RIVERS,
-  ROUTE_LENGTH,
-  SEGMENTS,
-  STATIONS,
-  STATION_POS,
-  TUNNELS,
-  segmentIndexAt,
-  type Span,
-} from './data';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { RIVERS, ROUTE_LENGTH, SEGMENTS, STATIONS, STATION_POS, TUNNELS, segmentIndexAt, type Span } from './data';
+import ballastUrl from './assets/ballast.jpg';
+import ballastNorUrl from './assets/ballast_nor.jpg';
+import grassUrl from './assets/grass.jpg';
+import concreteUrl from './assets/concrete.jpg';
 
 // ---------------- 線路の形（ゆるいカーブ） ----------------
 const curveX = (s: number) => 140 * Math.sin(s / 2300 + 0.4) + 80 * Math.sin(s / 760 + 1.9) + 18 * Math.sin(s / 330);
@@ -22,7 +19,6 @@ export function pathPos(s: number, lateral = 0, y = 0, out = new THREE.Vector3()
 }
 export const pathYaw = (s: number) => -Math.atan(curveDX(s));
 
-// ---------------- 乱数（チャンクごとに同じ結果になるように） ----------------
 function rng(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -57,6 +53,16 @@ export function regionAt(s: number): 'urban' | 'town' | 'rural' {
 }
 
 // ---------------- テクスチャ ----------------
+const texLoader = new THREE.TextureLoader();
+function photo(url: string, repeat: number, srgb = true): THREE.Texture {
+  const t = texLoader.load(url);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(repeat, repeat);
+  t.anisotropy = 8;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 function canvasTex(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void, repeat = false): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = w;
@@ -69,40 +75,59 @@ function canvasTex(w: number, h: number, draw: (g: CanvasRenderingContext2D) => 
   return t;
 }
 
-function ballastTexture(): THREE.CanvasTexture {
+// まくら木（コンクリート）。すきまは透明にして、下の砂利が見えるようにする
+function sleeperTexture(): THREE.CanvasTexture {
   return canvasTex(
     128,
-    128,
+    64,
     (g) => {
-      g.fillStyle = '#7a756c';
-      g.fillRect(0, 0, 128, 128);
-      const r = rng(7);
-      for (let i = 0; i < 900; i++) {
-        const v = 90 + Math.floor(r() * 70);
-        g.fillStyle = `rgb(${v},${v - 4},${v - 12})`;
-        g.fillRect(r() * 128, r() * 128, 2, 2);
+      g.clearRect(0, 0, 128, 64);
+      const r = rng(5);
+      g.fillStyle = '#a9a69e';
+      g.fillRect(10, 4, 108, 26);
+      for (let i = 0; i < 260; i++) {
+        const v = 140 + Math.floor(r() * 50);
+        g.fillStyle = `rgb(${v},${v - 3},${v - 8})`;
+        g.fillRect(10 + r() * 108, 4 + r() * 26, 2, 2);
       }
-      g.fillStyle = '#a7a39a';
-      g.fillRect(6, 40, 116, 40);
-      g.fillStyle = '#8e8a82';
-      g.fillRect(6, 74, 116, 6);
+      g.fillStyle = '#6f6c66';
+      g.fillRect(10, 28, 108, 3);
+      g.fillStyle = '#3d3a36';
+      g.fillRect(36, 12, 6, 10);
+      g.fillRect(86, 12, 6, 10);
     },
     true,
   );
 }
 
-function groundTexture(): THREE.CanvasTexture {
-  return canvasTex(
-    128,
-    128,
-    (g) => {
-      g.fillStyle = '#7fae5f';
-      g.fillRect(0, 0, 128, 128);
-      const r = rng(11);
-      for (let i = 0; i < 500; i++) {
-        g.fillStyle = r() < 0.5 ? '#76a457' : '#8bbb69';
-        g.fillRect(r() * 128, r() * 128, 3 + r() * 6, 3 + r() * 6);
+// ビルの窓。タイプごとに1枚
+function facadeTexture(cols: number, rows: number, seed: number, glass: string): THREE.CanvasTexture {
+  return canvasTex(256, 256, (g) => {
+    const r = rng(seed);
+    g.fillStyle = '#ffffff';
+    g.fillRect(0, 0, 256, 256);
+    const cw = 256 / cols;
+    const rh = 256 / rows;
+    for (let y = 0; y < rows; y++)
+      for (let x = 0; x < cols; x++) {
+        const lit = r();
+        g.fillStyle = lit < 0.15 ? '#9fb7c9' : glass;
+        g.fillRect(x * cw + cw * 0.14, y * rh + rh * 0.22, cw * 0.72, rh * 0.56);
+        g.fillStyle = 'rgba(255,255,255,.25)';
+        g.fillRect(x * cw + cw * 0.14, y * rh + rh * 0.22, cw * 0.72, rh * 0.08);
       }
+  });
+}
+
+function tactileTexture(): THREE.CanvasTexture {
+  return canvasTex(
+    64,
+    64,
+    (g) => {
+      g.fillStyle = '#f2c230';
+      g.fillRect(0, 0, 64, 64);
+      g.fillStyle = '#d9a91a';
+      for (let y = 8; y < 64; y += 16) for (let x = 8; x < 64; x += 16) g.fillRect(x - 3, y - 3, 6, 6);
     },
     true,
   );
@@ -151,13 +176,15 @@ const stopSignTex = canvasTex(128, 160, (g) => {
 });
 
 // ---------------- 形を作る道具 ----------------
-// 線路に沿った帯（断面 profile を s0〜s1 に流す）。座標はチャンクの原点 origin からの相対
-function ribbon(origin: THREE.Vector3, s0: number, s1: number, step: number, profile: [number, number][], uvAlong = 0): THREE.BufferGeometry {
+function ribbon(origin: THREE.Vector3, s0: number, s1: number, step: number, profile: [number, number][], uvAlong = 0, uvAcross = 0): THREE.BufferGeometry {
   const n = Math.max(1, Math.ceil((s1 - s0) / step));
   const P = profile.length;
   const pos = new Float32Array((n + 1) * P * 3);
   const uv = new Float32Array((n + 1) * P * 2);
   const v = new THREE.Vector3();
+  // 横方向のUV：uvAcross>0 なら距離(m)で、0 なら 0〜1
+  const across: number[] = [0];
+  for (let j = 1; j < P; j++) across.push(across[j - 1] + Math.hypot(profile[j][0] - profile[j - 1][0], profile[j][1] - profile[j - 1][1]));
   for (let i = 0; i <= n; i++) {
     const s = Math.min(s1, s0 + i * step);
     for (let j = 0; j < P; j++) {
@@ -166,7 +193,7 @@ function ribbon(origin: THREE.Vector3, s0: number, s1: number, step: number, pro
       pos[k] = v.x;
       pos[k + 1] = v.y;
       pos[k + 2] = v.z;
-      uv[(i * P + j) * 2] = j / Math.max(1, P - 1);
+      uv[(i * P + j) * 2] = uvAcross ? across[j] / uvAcross : j / Math.max(1, P - 1);
       uv[(i * P + j) * 2 + 1] = uvAlong ? (s - s0) / uvAlong : 0;
     }
   }
@@ -185,7 +212,6 @@ function ribbon(origin: THREE.Vector3, s0: number, s1: number, step: number, pro
   return geo;
 }
 
-// 区間 [a,b] から、除きたい区間を引いた残り
 function subtract(a: number, b: number, cut: Span[]): Span[] {
   let parts: Span[] = [{ from: a, to: b }];
   for (const c of cut) {
@@ -206,39 +232,96 @@ function intersect(a: number, b: number, spans: Span[]): Span[] {
   return spans.map((t) => ({ from: Math.max(a, t.from), to: Math.min(b, t.to) })).filter((p) => p.to - p.from > 1);
 }
 
-// ---------------- 材質 ----------------
+// ---------------- 材質（PBR） ----------------
+const T = {
+  ballast: photo(ballastUrl, 1),
+  ballastNor: photo(ballastNorUrl, 1, false),
+  grass: photo(grassUrl, 1),
+  concrete: photo(concreteUrl, 1),
+};
+const std = (o: THREE.MeshStandardMaterialParameters) => new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0, ...o });
 const M = {
-  ballast: new THREE.MeshLambertMaterial({ map: ballastTexture(), side: THREE.DoubleSide }),
-  rail: new THREE.MeshLambertMaterial({ color: '#d4d7da', emissive: '#30343a', side: THREE.DoubleSide }),
-  bank: new THREE.MeshLambertMaterial({ color: '#8f8a7f', side: THREE.DoubleSide }),
-  concrete: new THREE.MeshLambertMaterial({ color: '#b9b8b2', side: THREE.DoubleSide }),
-  wall: new THREE.MeshLambertMaterial({ color: '#c3c7cc', side: THREE.DoubleSide }),
-  pole: new THREE.MeshLambertMaterial({ color: '#9aa1a8' }),
+  ballast: std({ map: T.ballast, normalMap: T.ballastNor, normalScale: new THREE.Vector2(1.2, 1.2), side: THREE.DoubleSide }),
+  sleeper: std({ map: sleeperTexture(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.85 }),
+  rail: std({ color: '#b9bec4', metalness: 0.85, roughness: 0.32, side: THREE.DoubleSide }),
+  bank: std({ map: T.ballast, color: '#9a958a', side: THREE.DoubleSide }),
+  concrete: std({ map: T.concrete, color: '#d8d6cf', side: THREE.DoubleSide }),
+  wall: std({ map: T.concrete, color: '#e3e5e6', side: THREE.DoubleSide }),
+  pole: std({ color: '#8a939b', metalness: 0.55, roughness: 0.45 }),
+  footing: std({ map: T.concrete, color: '#cfccc4' }),
   wire: new THREE.LineBasicMaterial({ color: '#2b2b2b' }),
-  platform: new THREE.MeshLambertMaterial({ color: '#d9d4c8', side: THREE.DoubleSide }),
-  yellow: new THREE.MeshLambertMaterial({ color: '#ffd43b', side: THREE.DoubleSide }),
-  roof: new THREE.MeshBasicMaterial({ color: '#cfd5db', side: THREE.DoubleSide }),
-  tunnel: new THREE.MeshLambertMaterial({ color: '#4d4c48', side: THREE.DoubleSide }),
+  platform: std({ map: T.concrete, color: '#e6e1d6', side: THREE.DoubleSide }),
+  tactile: std({ map: tactileTexture(), side: THREE.DoubleSide, roughness: 0.7 }),
+  white: std({ color: '#f4f4f0', side: THREE.DoubleSide }),
+  roof: std({ color: '#c9d0d6', metalness: 0.4, roughness: 0.5, side: THREE.DoubleSide }),
+  tunnel: std({ map: T.concrete, color: '#6e6c66', side: THREE.DoubleSide }),
   lamp: new THREE.MeshBasicMaterial({ color: '#ffe8a3' }),
-  hill: new THREE.MeshLambertMaterial({ color: '#6c9a52', side: THREE.DoubleSide }),
-  water: new THREE.MeshLambertMaterial({ color: '#3d86c6', side: THREE.DoubleSide }),
-  sand: new THREE.MeshLambertMaterial({ color: '#e5d3a1', side: THREE.DoubleSide }),
-  build: new THREE.MeshLambertMaterial({ color: '#ffffff' }),
-  roofTile: new THREE.MeshLambertMaterial({ color: '#ffffff' }),
-  tree: new THREE.MeshLambertMaterial({ color: '#ffffff' }),
-  field: new THREE.MeshLambertMaterial({ color: '#ffffff' }),
-  mountain: new THREE.MeshLambertMaterial({ color: '#5f8f62' }),
-  person: new THREE.MeshLambertMaterial({ color: '#ffffff' }),
+  hill: std({ map: T.grass, color: '#6f9a55', side: THREE.DoubleSide }),
+  water: std({ color: '#2f6f9e', roughness: 0.15, metalness: 0.1, side: THREE.DoubleSide }),
+  sand: std({ color: '#e0cfa0', side: THREE.DoubleSide }),
+  officeLow: std({ map: facadeTexture(6, 4, 3, '#3d5163'), roughness: 0.6 }),
+  officeHigh: std({ map: facadeTexture(6, 12, 7, '#33475a'), roughness: 0.5 }),
+  house: std({ map: facadeTexture(3, 2, 11, '#4a5560'), roughness: 0.85 }),
+  roofTile: std({ roughness: 0.75 }),
+  trunk: std({ color: '#5a4632' }),
+  tree: std({ roughness: 1 }),
+  field: std({ map: T.grass, color: '#b5d18c', roughness: 1 }),
+  mountain: std({ color: '#5e7d5a', roughness: 1 }),
+  person: std({ roughness: 0.8 }),
   sign: new THREE.MeshBasicMaterial({ map: stopSignTex, side: THREE.DoubleSide }),
 };
+M.field.map = T.grass;
 const SHARED_MATS = new Set<THREE.Material>(Object.values(M));
+
+// 三角屋根（切妻）の形
+function gableGeometry(): THREE.BufferGeometry {
+  const s = new THREE.Shape();
+  s.moveTo(-0.5, 0);
+  s.lineTo(0.5, 0);
+  s.lineTo(0, 0.5);
+  s.closePath();
+  const g = new THREE.ExtrudeGeometry(s, { depth: 1, bevelEnabled: false });
+  g.translate(0, 0, -0.5);
+  return g;
+}
+
+// でこぼこした山
+function mountainGeometry(): THREE.BufferGeometry {
+  const g = new THREE.ConeGeometry(1, 1, 28, 6);
+  const p = g.attributes.position as THREE.BufferAttribute;
+  const r = rng(42);
+  for (let i = 0; i < p.count; i++) {
+    const y = p.getY(i);
+    if (y > 0.49) continue;
+    const k = 0.75 + r() * 0.5;
+    p.setX(i, p.getX(i) * k);
+    p.setZ(i, p.getZ(i) * k);
+    p.setY(i, y + (r() - 0.5) * 0.08);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+// もこもこした木の葉
+function crownGeometry(): THREE.BufferGeometry {
+  const g = new THREE.IcosahedronGeometry(1, 1);
+  const p = g.attributes.position as THREE.BufferAttribute;
+  const r = rng(9);
+  for (let i = 0; i < p.count; i++) {
+    const k = 0.85 + r() * 0.3;
+    p.setXYZ(i, p.getX(i) * k, p.getY(i) * k * 1.15, p.getZ(i) * k);
+  }
+  g.computeVertexNormals();
+  return g;
+}
 
 const G = {
   box: new THREE.BoxGeometry(1, 1, 1),
-  roof: new THREE.ConeGeometry(0.75, 1, 4, 1).rotateY(Math.PI / 4),
-  tree: new THREE.ConeGeometry(1, 1, 7, 1),
+  gable: gableGeometry(),
+  crown: crownGeometry(),
+  trunk: new THREE.CylinderGeometry(0.12, 0.16, 1, 6),
   person: new THREE.CapsuleGeometry(0.22, 1.0, 3, 6),
-  mountain: new THREE.ConeGeometry(1, 1, 9, 1),
+  mountain: mountainGeometry(),
 };
 const SHARED_GEOS = new Set<THREE.BufferGeometry>(Object.values(G));
 
@@ -258,7 +341,7 @@ interface Item {
   color?: string;
 }
 
-function placeInstanced(geo: THREE.BufferGeometry, mat: THREE.Material, items: Item[]): THREE.InstancedMesh | null {
+function placeInstanced(geo: THREE.BufferGeometry, mat: THREE.Material, items: Item[], cast = false, receive = false): THREE.InstancedMesh | null {
   if (!items.length) return null;
   const mesh = new THREE.InstancedMesh(geo, mat, items.length);
   items.forEach((it, i) => {
@@ -270,13 +353,16 @@ function placeInstanced(geo: THREE.BufferGeometry, mat: THREE.Material, items: I
   });
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.castShadow = cast;
+  mesh.receiveShadow = receive;
+  mesh.computeBoundingSphere();
   return mesh;
 }
 
-const BUILD_COLORS = ['#e9e4da', '#d6d2c8', '#c8ccd1', '#f2efe6', '#b8bec6', '#e3d7c3', '#a9b3bd', '#f5f3ee'];
-const ROOF_COLORS = ['#59606b', '#7a4e3a', '#3f5a7a', '#6b6b6b', '#8a5a44'];
-const TREE_COLORS = ['#3f7d3a', '#4b8a3f', '#356b33', '#5a9447'];
-const FIELD_COLORS = ['#9cc46b', '#b7d17a', '#86b35a', '#c9c27a', '#7fae5f'];
+const BUILD_COLORS = ['#d9d4ca', '#c8c2b6', '#b9bec4', '#e2ddd2', '#aeb4bb', '#d6c9b4', '#a4adb6', '#e6e2d8'];
+const HOUSE_COLORS = ['#f2ede2', '#e6dccb', '#d9d4c8', '#efe6d4', '#cdd2d6'];
+const ROOF_COLORS = ['#4f5661', '#6e4637', '#38506c', '#5e5e5e', '#7a4f3c', '#3b4a3a'];
+const TREE_COLORS = ['#3e6e35', '#4a7a3b', '#35602f', '#557f43', '#2f5a2c'];
 const PEOPLE_COLORS = ['#e03131', '#1c7ed6', '#f08c00', '#2f9e44', '#7048e8', '#495057', '#f783ac', '#212529', '#ffd43b'];
 
 // ---------------- チャンクを作る ----------------
@@ -293,10 +379,14 @@ function buildChunk(k: number): Chunk {
   group.position.copy(origin);
   const people = new Map<number, THREE.InstancedMesh>();
   const at = (s: number, lat: number, y: number) => pathPos(s, lat, y, new THREE.Vector3()).sub(origin);
-  const R = (a: number, b: number, step: number, prof: [number, number][], mat: THREE.Material, uv = 0) =>
-    group.add(new THREE.Mesh(ribbon(origin, a, b, step, prof, uv), mat));
-  const addInst = (geo: THREE.BufferGeometry, mat: THREE.Material, items: Item[]) => {
-    const m = placeInstanced(geo, mat, items);
+  const R = (a: number, b: number, step: number, prof: [number, number][], mat: THREE.Material, uvAlong = 0, uvAcross = 0, cast = false) => {
+    const m = new THREE.Mesh(ribbon(origin, a, b, step, prof, uvAlong, uvAcross), mat);
+    m.receiveShadow = true;
+    m.castShadow = cast;
+    group.add(m);
+  };
+  const addInst = (geo: THREE.BufferGeometry, mat: THREE.Material, items: Item[], cast = false, receive = false) => {
+    const m = placeInstanced(geo, mat, items, cast, receive);
     if (m) group.add(m);
     return m;
   };
@@ -306,47 +396,56 @@ function buildChunk(k: number): Chunk {
   const platforms = PLATFORMS.filter((p) => p.to > s0 && p.from < s1);
   const open = subtract(s0, s1, [...TUNNELS, ...RIVER_SPANS]);
 
-  // 線路（2本）
+  // 線路（2本）：砂利・まくら木・レール
   for (const off of [0, OTHER]) {
-    R(s0, s1, 10, [[off - 1.7, 0.02], [off + 1.7, 0.02]], M.ballast, 0.625);
+    R(s0, s1, 10, [[off - 1.9, 0.0], [off - 1.5, 0.1], [off + 1.5, 0.1], [off + 1.9, 0.0]], M.ballast, 3.4, 3.4);
+    R(s0, s1, 10, [[off - 1.3, 0.13], [off + 1.3, 0.13]], M.sleeper, 0.625);
     for (const r of [-0.7175, 0.7175])
-      R(s0, s1, 10, [[off + r - 0.035, 0.02], [off + r - 0.035, 0.18], [off + r + 0.035, 0.18], [off + r + 0.035, 0.02]], M.rail);
+      R(s0, s1, 10, [[off + r - 0.04, 0.13], [off + r - 0.035, 0.29], [off + r + 0.035, 0.29], [off + r + 0.04, 0.13]], M.rail);
   }
   // 盛り土
-  for (const p of open) R(p.from, p.to, 20, [[-9, -2.2], [-3, 0], [OTHER + 3, 0], [OTHER + 9, -2.2]], M.bank);
+  for (const p of open) R(p.from, p.to, 20, [[-10, -2.4], [-2.2, 0], [OTHER + 2.2, 0], [OTHER + 10, -2.4]], M.bank, 6, 6);
   // 橋と川
   for (const p of rivers) {
-    R(p.from, p.to, 10, [[-3.1, -1.4], [-3.1, 0.9]], M.concrete);
-    R(p.from, p.to, 10, [[OTHER + 3.1, -1.4], [OTHER + 3.1, 0.9]], M.concrete);
-    R(p.from, p.to, 10, [[-3.1, -1.4], [OTHER + 3.1, -1.4]], M.concrete);
+    R(p.from, p.to, 10, [[-3.1, -1.6], [-3.1, 1.0]], M.concrete, 4, 4);
+    R(p.from, p.to, 10, [[OTHER + 3.1, -1.6], [OTHER + 3.1, 1.0]], M.concrete, 4, 4);
+    R(p.from, p.to, 10, [[-3.1, -1.6], [OTHER + 3.1, -1.6]], M.concrete, 4, 4);
     const piers: Item[] = [];
-    for (let s = Math.ceil(p.from / 40) * 40; s < p.to; s += 40) piers.push({ p: at(s, OTHER / 2, -2.6), yaw: pathYaw(s), sx: 12, sy: 2.4, sz: 2 });
-    addInst(G.box, M.concrete, piers);
+    for (let s = Math.ceil(p.from / 40) * 40; s < p.to; s += 40) piers.push({ p: at(s, OTHER / 2, -2.8), yaw: pathYaw(s), sx: 12, sy: 2.4, sz: 2.2 });
+    addInst(G.box, M.concrete, piers, true, true);
     R(p.from - 20, p.to + 20, 20, [[-3000, -2.3], [3000, -2.3]], M.water);
   }
   // 防音壁（まちの中）
   for (const p of subtract(s0, s1, [...TUNNELS, ...RIVER_SPANS, ...PLATFORMS])) {
     if (regionAt((p.from + p.to) / 2) === 'urban') {
-      R(p.from, p.to, 20, [[-3.4, 0], [-3.4, 2.0]], M.wall);
-      R(p.from, p.to, 20, [[OTHER + 3.4, 0], [OTHER + 3.4, 2.0]], M.wall);
+      R(p.from, p.to, 20, [[-3.6, 0], [-3.6, 2.2]], M.wall, 4, 4, true);
+      R(p.from, p.to, 20, [[OTHER + 3.6, 0], [OTHER + 3.6, 2.2]], M.wall, 4, 4, true);
     }
   }
-  // 架線柱と架線
+  // 架線柱（門の形）と架線
   const poles: Item[] = [];
   const beams: Item[] = [];
+  const arms: Item[] = [];
+  const foots: Item[] = [];
   for (let s = Math.ceil(s0 / 50) * 50; s < s1; s += 50) {
     if (inSpan(s, TUNNELS)) continue;
     const yaw = pathYaw(s);
-    poles.push({ p: at(s, -3.7, 3.7), yaw, sx: 0.35, sy: 7.4, sz: 0.35 });
-    poles.push({ p: at(s, OTHER + 3.7, 3.7), yaw, sx: 0.35, sy: 7.4, sz: 0.35 });
-    beams.push({ p: at(s, OTHER / 2, 7.1), yaw, sx: OTHER + 7.8, sy: 0.35, sz: 0.35 });
+    for (const lat of [-3.9, OTHER + 3.9]) {
+      poles.push({ p: at(s, lat, 3.7), yaw, sx: 0.3, sy: 7.6, sz: 0.3 });
+      foots.push({ p: at(s, lat, 0.0), yaw, sx: 0.8, sy: 0.6, sz: 0.8 });
+    }
+    beams.push({ p: at(s, OTHER / 2, 7.2), yaw, sx: OTHER + 8.2, sy: 0.32, sz: 0.32 });
+    beams.push({ p: at(s, OTHER / 2, 6.7), yaw, sx: OTHER + 8.2, sy: 0.14, sz: 0.14 });
+    for (const off of [0, OTHER]) arms.push({ p: at(s, off, 6.2), yaw, sx: 0.08, sy: 1.0, sz: 0.08 });
   }
-  addInst(G.box, M.pole, poles);
-  addInst(G.box, M.pole, beams);
+  addInst(G.box, M.pole, poles, true);
+  addInst(G.box, M.pole, beams, true);
+  addInst(G.box, M.pole, arms);
+  addInst(G.box, M.footing, foots, false, true);
   for (const off of [0, OTHER])
-    for (const h of [5.1, 6.3]) {
+    for (const h of [5.25, 6.4]) {
       const pts: THREE.Vector3[] = [];
-      for (let s = s0; s <= s1; s += 25) pts.push(at(s, off, h));
+      for (let s = s0; s <= s1; s += 25) pts.push(at(s, off, h + (h > 6 ? 0.15 * Math.sin(((s % 50) / 50) * Math.PI) * -1 : 0)));
       group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), M.wire));
     }
 
@@ -357,24 +456,28 @@ function buildChunk(k: number): Chunk {
       const a = (Math.PI * i) / 12;
       prof.push([OTHER / 2 + 6.4 * Math.cos(a), -0.3 + 7.6 * Math.sin(a)]);
     }
-    R(t.from, t.to, 10, prof, M.tunnel);
-    R(t.from, t.to, 20, [[OTHER / 2 - 6.5, -0.02], [OTHER / 2 + 6.5, -0.02]], M.tunnel);
+    R(t.from, t.to, 10, prof, M.tunnel, 4, 4);
+    R(t.from, t.to, 20, [[OTHER / 2 - 6.5, -0.02], [OTHER / 2 + 6.5, -0.02]], M.tunnel, 4, 4);
     const lamps: Item[] = [];
     for (let s = Math.ceil(t.from / 40) * 40; s < t.to; s += 40) lamps.push({ p: at(s, -3.4, 3.2), yaw: pathYaw(s), sx: 0.25, sy: 0.25, sz: 1.2 });
     addInst(G.box, M.lamp, lamps);
-    // トンネルの上の山
-    R(t.from, t.to, 20, [[-280, -2.5], [-90, 34], [-14, 15], [OTHER + 14, 15], [100, 34], [280, -2.5]], M.hill);
+    R(t.from, t.to, 20, [[-280, -2.5], [-90, 34], [-14, 15], [OTHER + 14, 15], [100, 34], [280, -2.5]], M.hill, 40, 40);
   }
-  // トンネルの入口
   for (const t of TUNNELS) {
     for (const edge of [t.from, t.to]) {
       if (edge < s0 || edge >= s1) continue;
       const yaw = pathYaw(edge);
-      addInst(G.box, M.concrete, [
-        { p: at(edge, -5.2, 3.6), yaw, sx: 2.4, sy: 9, sz: 3 },
-        { p: at(edge, OTHER + 5.2, 3.6), yaw, sx: 2.4, sy: 9, sz: 3 },
-        { p: at(edge, OTHER / 2, 8.6), yaw, sx: OTHER + 13, sy: 2.6, sz: 3 },
-      ]);
+      addInst(
+        G.box,
+        M.concrete,
+        [
+          { p: at(edge, -5.2, 3.6), yaw, sx: 2.4, sy: 9, sz: 3 },
+          { p: at(edge, OTHER + 5.2, 3.6), yaw, sx: 2.4, sy: 9, sz: 3 },
+          { p: at(edge, OTHER / 2, 8.6), yaw, sx: OTHER + 13, sy: 2.6, sz: 3 },
+        ],
+        true,
+        true,
+      );
     }
   }
 
@@ -382,19 +485,20 @@ function buildChunk(k: number): Chunk {
   for (const pl of platforms) {
     const a = Math.max(s0, pl.from);
     const b = Math.min(s1, pl.to);
-    R(a, b, 10, [[-12, 1.25], [-1.8, 1.25], [-1.8, -0.3]], M.platform);
-    R(a, b, 10, [[-2.75, 1.27], [-2.45, 1.27]], M.yellow);
-    R(a, b, 10, [[OTHER + 1.8, -0.3], [OTHER + 1.8, 1.25], [OTHER + 13, 1.25]], M.platform);
-    R(a, b, 10, [[OTHER + 2.45, 1.27], [OTHER + 2.75, 1.27]], M.yellow);
-    R(a, b, 10, [[-12, 5.4], [-1.2, 5.4]], M.roof);
-    R(a, b, 10, [[OTHER + 1.2, 5.4], [OTHER + 13, 5.4]], M.roof);
+    R(a, b, 10, [[-12, 1.25], [-2.9, 1.25]], M.platform, 4, 4);
+    R(a, b, 10, [[-2.9, 1.26], [-2.3, 1.26]], M.tactile, 0.6, 0.6);
+    R(a, b, 10, [[-2.3, 1.25], [-1.8, 1.25], [-1.8, -0.3]], M.white, 4, 4);
+    R(a, b, 10, [[OTHER + 1.8, -0.3], [OTHER + 1.8, 1.25], [OTHER + 2.3, 1.25]], M.white, 4, 4);
+    R(a, b, 10, [[OTHER + 2.3, 1.26], [OTHER + 2.9, 1.26]], M.tactile, 0.6, 0.6);
+    R(a, b, 10, [[OTHER + 2.9, 1.25], [OTHER + 13, 1.25]], M.platform, 4, 4);
+    R(a, b, 10, [[-12, 5.2], [-7, 5.8], [-1.2, 5.4]], M.roof, 0, 0, true);
+    R(a, b, 10, [[OTHER + 1.2, 5.4], [OTHER + 8, 5.8], [OTHER + 13, 5.2]], M.roof, 0, 0, true);
     const pillars: Item[] = [];
     for (let s = Math.ceil(a / 20) * 20; s < b; s += 20) {
-      pillars.push({ p: at(s, -7, 3.3), yaw: pathYaw(s), sx: 0.5, sy: 4.2, sz: 0.5 });
-      pillars.push({ p: at(s, OTHER + 8, 3.3), yaw: pathYaw(s), sx: 0.5, sy: 4.2, sz: 0.5 });
+      pillars.push({ p: at(s, -7, 3.4), yaw: pathYaw(s), sx: 0.4, sy: 4.4, sz: 0.4 });
+      pillars.push({ p: at(s, OTHER + 8, 3.4), yaw: pathYaw(s), sx: 0.4, sy: 4.4, sz: 0.4 });
     }
-    addInst(G.box, M.pole, pillars);
-    // 駅名の看板（電車の方を向いて吊るす）
+    addInst(G.box, M.pole, pillars, true);
     const signMat = new THREE.MeshBasicMaterial({ map: stationSignTexture(pl.st), side: THREE.DoubleSide });
     for (const off of [-380, -250, -120, 5]) {
       const s = pl.to - 20 + off;
@@ -406,7 +510,6 @@ function buildChunk(k: number): Chunk {
         group.add(m);
       }
     }
-    // 停止位置の目印
     const stop = STATION_POS[pl.st];
     if (stop >= a && stop < b) {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 1.0), M.sign);
@@ -415,67 +518,66 @@ function buildChunk(k: number): Chunk {
       group.add(m);
       addInst(G.box, M.pole, [{ p: at(stop, -2.3, 1.5), yaw: pathYaw(stop), sx: 0.08, sy: 0.7, sz: 0.08 }]);
     }
-    // ホームで待つ人
     const r = rng(pl.st * 31 + k);
     const count = Math.round((STATIONS[pl.st].size * 45 * (b - a)) / 430);
     const ppl: Item[] = [];
-    for (let i = 0; i < count; i++) {
-      const s = a + r() * (b - a);
-      ppl.push({ p: at(s, -3.3 - r() * 6, 2.0), yaw: 0, sx: 1, sy: 1, sz: 1, color: PEOPLE_COLORS[Math.floor(r() * PEOPLE_COLORS.length)] });
-    }
-    const pm = addInst(G.person, M.person, ppl);
+    for (let i = 0; i < count; i++) ppl.push({ p: at(a + r() * (b - a), -3.4 - r() * 6, 2.0), yaw: 0, sx: 1, sy: 1, sz: 1, color: PEOPLE_COLORS[Math.floor(r() * PEOPLE_COLORS.length)] });
+    const pm = addInst(G.person, M.person, ppl, true);
     if (pm) people.set(pl.st, pm);
     const other: Item[] = [];
-    for (let i = 0; i < count / 3; i++) {
-      const s = a + r() * (b - a);
-      other.push({ p: at(s, OTHER + 3.4 + r() * 6, 2.0), yaw: 0, sx: 1, sy: 1, sz: 1, color: PEOPLE_COLORS[Math.floor(r() * PEOPLE_COLORS.length)] });
-    }
-    addInst(G.person, M.person, other);
+    for (let i = 0; i < count / 3; i++) other.push({ p: at(a + r() * (b - a), OTHER + 3.4 + r() * 6, 2.0), yaw: 0, sx: 1, sy: 1, sz: 1, color: PEOPLE_COLORS[Math.floor(r() * PEOPLE_COLORS.length)] });
+    addInst(G.person, M.person, other, true);
   }
 
   // 景色
   const r = rng(k * 7919 + 13);
   const seg = SEGMENTS[segmentIndexAt((s0 + s1) / 2)];
   const region = regionAt((s0 + s1) / 2);
-  const builds: Item[] = [];
+  const low: Item[] = [];
+  const high: Item[] = [];
+  const houses: Item[] = [];
   const roofs: Item[] = [];
-  const trees: Item[] = [];
+  const trunks: Item[] = [];
+  const crowns: Item[] = [];
   const fields: Item[] = [];
   const waterLeft = !!(seg.sea || seg.lake);
   if (waterLeft) {
     R(s0, s1, 25, [[-3000, -2.3], [-70, -2.3]], M.water);
     R(s0, s1, 25, [[-70, -2.25], [-24, -2.2]], M.sand);
   }
-  const dens = region === 'urban' ? 60 : region === 'town' ? 34 : 18;
+  const dens = region === 'urban' ? 70 : region === 'town' ? 40 : 20;
   for (let i = 0; i < dens; i++) {
     const s = s0 + r() * (s1 - s0);
     if (inSpan(s, TUNNELS, 60)) continue;
     const left = r() < 0.5;
     if (left && waterLeft) continue;
-    const dist = 22 + Math.pow(r(), 1.6) * 420;
+    const dist = 24 + Math.pow(r(), 1.5) * 420;
     const lat = left ? -dist : OTHER + dist;
-    const yaw = pathYaw(s) + (r() - 0.5) * 0.3;
-    const isBldg = region === 'urban' ? r() < 0.75 : region === 'town' ? r() < 0.3 : false;
+    const yaw = pathYaw(s) + (r() - 0.5) * 0.25;
+    const isBldg = region === 'urban' ? r() < 0.7 : region === 'town' ? r() < 0.25 : false;
     if (isBldg) {
-      const h = 8 + r() * (region === 'urban' ? 55 : 18);
-      builds.push({ p: at(s, lat, h / 2 - 2.5), yaw, sx: 10 + r() * 22, sy: h, sz: 10 + r() * 18, color: BUILD_COLORS[Math.floor(r() * BUILD_COLORS.length)] });
+      const h = 9 + r() * (region === 'urban' ? 60 : 16);
+      const item = { p: at(s, lat, h / 2 - 2.5), yaw, sx: 12 + r() * 22, sy: h, sz: 12 + r() * 16, color: BUILD_COLORS[Math.floor(r() * BUILD_COLORS.length)] };
+      (h > 28 ? high : low).push(item);
     } else {
-      const w = 7 + r() * 5;
-      const d = 7 + r() * 4;
-      const h = 5 + r() * 2.5;
-      builds.push({ p: at(s, lat, h / 2 - 2.5), yaw, sx: w, sy: h, sz: d, color: BUILD_COLORS[Math.floor(r() * BUILD_COLORS.length)] });
-      roofs.push({ p: at(s, lat, h - 2.5 + 1.4), yaw, sx: w * 1.05, sy: 2.8, sz: d * 1.05, color: ROOF_COLORS[Math.floor(r() * ROOF_COLORS.length)] });
+      const w = 7 + r() * 4;
+      const d = 8 + r() * 4;
+      const h = 5.5 + r() * 2;
+      houses.push({ p: at(s, lat, h / 2 - 2.5), yaw, sx: w, sy: h, sz: d, color: HOUSE_COLORS[Math.floor(r() * HOUSE_COLORS.length)] });
+      roofs.push({ p: at(s, lat, h - 2.5), yaw, sx: w * 1.12, sy: 3.4, sz: d * 1.1, color: ROOF_COLORS[Math.floor(r() * ROOF_COLORS.length)] });
     }
   }
-  const treeN = region === 'urban' ? 25 : 90;
+  const treeN = region === 'urban' ? 30 : 110;
   for (let i = 0; i < treeN; i++) {
     const s = s0 + r() * (s1 - s0);
     if (inSpan(s, TUNNELS, 40)) continue;
     const left = r() < 0.5;
     if (left && waterLeft) continue;
     const dist = 14 + Math.pow(r(), 1.3) * 500;
-    const h = 6 + r() * 9;
-    trees.push({ p: at(s, left ? -dist : OTHER + dist, h / 2 - 2.5), yaw: 0, sx: h * 0.35, sy: h, sz: h * 0.35, color: TREE_COLORS[Math.floor(r() * TREE_COLORS.length)] });
+    const h = 7 + r() * 9;
+    const lat = left ? -dist : OTHER + dist;
+    trunks.push({ p: at(s, lat, -2.5 + h * 0.25), yaw: 0, sx: h * 0.12, sy: h * 0.5, sz: h * 0.12 });
+    crowns.push({ p: at(s, lat, -2.5 + h * 0.62), yaw: r() * 6, sx: h * 0.34, sy: h * 0.36, sz: h * 0.34, color: TREE_COLORS[Math.floor(r() * TREE_COLORS.length)] });
   }
   if (region !== 'urban') {
     const n = seg.tea ? 40 : 14;
@@ -485,19 +587,20 @@ function buildChunk(k: number): Chunk {
       if ((left && waterLeft) || inSpan(s, TUNNELS, 60)) continue;
       const dist = 20 + r() * 260;
       if (seg.tea) {
-        // 茶畑：こんもりした緑の列
         for (let j = 0; j < 6; j++)
-          fields.push({ p: at(s, left ? -(dist + j * 3) : OTHER + dist + j * 3, -1.8), yaw: pathYaw(s), sx: 1.8, sy: 1.4, sz: 40, color: '#2f6b2a' });
+          crowns.push({ p: at(s, left ? -(dist + j * 3) : OTHER + dist + j * 3, -1.9), yaw: pathYaw(s), sx: 0.9, sy: 0.7, sz: 20, color: '#2f6b2a' });
       } else {
-        fields.push({ p: at(s, left ? -dist : OTHER + dist, -2.2), yaw: pathYaw(s), sx: 40 + r() * 40, sy: 0.1, sz: 50 + r() * 60, color: FIELD_COLORS[Math.floor(r() * FIELD_COLORS.length)] });
+        fields.push({ p: at(s, left ? -dist : OTHER + dist, -2.2), yaw: pathYaw(s), sx: 40 + r() * 40, sy: 0.1, sz: 50 + r() * 60, color: ['#b7cf8a', '#9fbf6f', '#c9c27a', '#a8c27a'][Math.floor(r() * 4)] });
       }
     }
   }
-  addInst(G.box, M.build, builds);
-  addInst(G.roof, M.roofTile, roofs);
-  addInst(G.tree, M.tree, trees);
-  addInst(G.box, M.field, fields);
-  // 遠くの山
+  addInst(G.box, M.officeLow, low, true, true);
+  addInst(G.box, M.officeHigh, high, true, true);
+  addInst(G.box, M.house, houses, true, true);
+  addInst(G.gable, M.roofTile, roofs, true);
+  addInst(G.trunk, M.trunk, trunks, true);
+  addInst(G.crown, M.tree, crowns, true);
+  addInst(G.box, M.field, fields, false, true);
   if (seg.mountains || region === 'rural') {
     const mts: Item[] = [];
     for (let i = 0; i < 3; i++) {
@@ -506,7 +609,7 @@ function buildChunk(k: number): Chunk {
       if (left && waterLeft) continue;
       const dist = 1600 + r() * 2600;
       const h = 300 + r() * 700;
-      mts.push({ p: at(s, left ? -dist : dist, h / 2 - 2.5), yaw: r() * 6, sx: h * 2.4, sy: h, sz: h * 2.2 });
+      mts.push({ p: at(s, left ? -dist : dist, h / 2 - 2.5), yaw: r() * 6, sx: h * 2.6, sy: h, sz: h * 2.3 });
     }
     addInst(G.mountain, M.mountain, mts);
   }
@@ -524,35 +627,81 @@ function disposeChunk(c: Chunk): void {
 }
 
 // ---------------- 世界 ----------------
+// 太陽は うしろ左の ななめ上（前の景色が 明るく見えるように）
+const SUN_DIR = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 38), THREE.MathUtils.degToRad(-40));
+
 export class World {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly renderer: THREE.WebGLRenderer;
   private chunks = new Map<number, Chunk>();
   private ground: THREE.Mesh;
-  private groundTex: THREE.Texture;
+  private sky: Sky;
+  private sun: THREE.DirectionalLight;
   private fuji: THREE.Group;
-  private sky = new THREE.Color('#a9d8ff');
+  private haze = new THREE.Color('#c3d5e4');
   private dark = new THREE.Color('#141414');
   private oncoming: THREE.Group;
   private oncS = -1;
   inTunnel = false;
+  lowQuality = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 0.62;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.camera = new THREE.PerspectiveCamera(58, 16 / 9, 1, 16000);
-    this.scene.background = this.sky.clone();
-    this.scene.fog = new THREE.Fog(this.sky.clone(), 300, 4800);
-    this.scene.add(new THREE.HemisphereLight('#ffffff', '#55704a', 1.6));
-    const sun = new THREE.DirectionalLight('#fff6e0', 1.6);
-    sun.position.set(-0.6, 1, 0.4);
-    this.scene.add(sun);
-    this.groundTex = groundTexture();
-    this.groundTex.repeat.set(600, 600);
-    this.ground = new THREE.Mesh(new THREE.PlaneGeometry(12000, 12000), new THREE.MeshLambertMaterial({ map: this.groundTex }));
+    this.scene.background = this.haze.clone();
+    this.scene.fog = new THREE.Fog(this.haze.clone(), 400, 5200);
+
+    // 空（太陽の高さで色が変わる）と、その空から作る環境光
+    this.sky = new Sky();
+    this.sky.scale.setScalar(12000);
+    const u = this.sky.material.uniforms;
+    u.turbidity.value = 4;
+    u.rayleigh.value = 1.4;
+    u.mieCoefficient.value = 0.004;
+    u.mieDirectionalG.value = 0.8;
+    u.sunPosition.value.copy(SUN_DIR);
+    this.scene.add(this.sky);
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const envScene = new THREE.Scene();
+    const envSky = new Sky();
+    envSky.scale.setScalar(1000);
+    Object.assign(envSky.material.uniforms.sunPosition.value, SUN_DIR);
+    envSky.material.uniforms.turbidity.value = 4;
+    envSky.material.uniforms.rayleigh.value = 1.4;
+    envScene.add(envSky);
+    this.scene.environment = pmrem.fromScene(envScene).texture;
+    this.scene.environmentIntensity = 0.45;
+    pmrem.dispose();
+
+    this.scene.add(new THREE.HemisphereLight('#d6e6ff', '#4d5b3a', 0.4));
+    this.sun = new THREE.DirectionalLight('#fff1dc', 2.4);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(2048, 2048);
+    const sc = this.sun.shadow.camera;
+    sc.near = 1;
+    sc.far = 500;
+    sc.left = -70;
+    sc.right = 70;
+    sc.top = 70;
+    sc.bottom = -70;
+    this.sun.shadow.bias = -0.0004;
+    this.sun.shadow.normalBias = 0.03;
+    this.scene.add(this.sun, this.sun.target);
+
+    T.grass.repeat.set(1, 1);
+    const groundTex = T.grass.clone();
+    groundTex.repeat.set(400, 400);
+    groundTex.needsUpdate = true;
+    this.ground = new THREE.Mesh(new THREE.PlaneGeometry(12000, 12000), std({ map: groundTex, color: '#a8cc80', roughness: 1 }));
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.position.y = -2.5;
+    this.ground.receiveShadow = true;
     this.scene.add(this.ground);
     this.fuji = this.makeFuji();
     this.scene.add(this.fuji);
@@ -563,9 +712,9 @@ export class World {
 
   private makeFuji(): THREE.Group {
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.ConeGeometry(4500, 2600, 48, 1, true), new THREE.MeshBasicMaterial({ color: '#7d95ba', fog: false }));
+    const body = new THREE.Mesh(new THREE.ConeGeometry(4500, 2600, 64, 1, true), new THREE.MeshBasicMaterial({ color: '#7088ad', fog: false }));
     body.position.y = 1300 - 30;
-    const cap = new THREE.Mesh(new THREE.ConeGeometry(1390, 805, 48, 1, true), new THREE.MeshBasicMaterial({ color: '#f4f7fb', fog: false }));
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(1390, 805, 64, 1, true), new THREE.MeshBasicMaterial({ color: '#f1f5fa', fog: false }));
     cap.position.y = 2200 - 28;
     g.add(body, cap);
     pathPos(STATION_POS[6] + 1500, 12500, 0, g.position);
@@ -589,13 +738,30 @@ export class World {
       true,
     );
     tex.repeat.set(40, 1);
-    const body = new THREE.Mesh(new THREE.BoxGeometry(3.4, 3.6, 400), new THREE.MeshLambertMaterial({ map: tex }));
-    body.position.set(0, 2.0, 200);
-    const nose = new THREE.Mesh(new THREE.ConeGeometry(1.8, 14, 12).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#f8f9fa' }));
+    const mat = std({ map: tex, metalness: 0.2, roughness: 0.35 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3.4, 3.6, 400), mat);
+    body.position.set(0, 2.2, 200);
+    body.castShadow = true;
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(1.8, 14, 16).rotateX(-Math.PI / 2), std({ color: '#f8f9fa', metalness: 0.2, roughness: 0.3 }));
     nose.scale.set(1, 0.9, 1);
-    nose.position.set(0, 1.8, -7);
+    nose.position.set(0, 2.0, -7);
     g.add(body, nose);
     return g;
+  }
+
+  // PCが重いときは、影をやめて解像度を下げる
+  setLowQuality(): void {
+    if (this.lowQuality) return;
+    this.lowQuality = true;
+    this.renderer.setPixelRatio(1);
+    this.renderer.shadowMap.enabled = false;
+    this.sun.castShadow = false;
+    this.scene.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+      if (m && !Array.isArray(m)) m.needsUpdate = true;
+    });
+    const c = this.renderer.domElement;
+    this.resize(c.clientWidth, c.clientHeight);
   }
 
   resize(w: number, h: number): void {
@@ -604,7 +770,6 @@ export class World {
     this.camera.updateProjectionMatrix();
   }
 
-  // すれちがう新幹線を出す
   spawnOncoming(s: number): void {
     this.oncS = s + 2600;
     this.oncoming.visible = true;
@@ -620,7 +785,6 @@ export class World {
     }
   }
 
-  // 出発前に、まわりのチャンクをまとめて作っておく
   prebuild(s: number): void {
     const kNow = Math.floor(s / CHUNK);
     for (let k = kNow - 1; k <= kNow + 5; k++) {
@@ -632,7 +796,6 @@ export class World {
   }
 
   update(s: number, dt: number, kmh: number, time: number): void {
-    // チャンクの作成・削除
     const kNow = Math.floor(s / CHUNK);
     for (let k = kNow - 1; k <= kNow + 5; k++) {
       if (k < 0 || k * CHUNK > ROUTE_LENGTH || this.chunks.has(k)) continue;
@@ -650,26 +813,34 @@ export class World {
     }
     // カメラ（運転席の目の高さ）
     const sway = Math.min(1, kmh / 250);
-    pathPos(s, 0, 3.4 + Math.sin(time * 9) * 0.012 * sway, this.camera.position);
+    pathPos(s, 0, 3.5 + Math.sin(time * 9) * 0.012 * sway, this.camera.position);
     this.camera.position.x += Math.sin(time * 1.7) * 0.03 * sway;
-    this.camera.lookAt(pathPos(s + 160, 0, 2.2, tmpP));
-    // 地面はカメラについてくる（模様は動かす）
-    this.ground.position.x = this.camera.position.x;
-    this.ground.position.z = this.camera.position.z;
-    this.groundTex.offset.set(this.camera.position.x / 20, -this.camera.position.z / 20);
+    this.camera.lookAt(pathPos(s + 160, 0, 2.3, tmpP));
+    const cam = this.camera.position;
+    this.sky.position.copy(cam);
+    // 太陽の影は、電車のまわりだけ（前を広めに）
+    const focus = pathPos(s + 45, OTHER / 2, 0, tmpP);
+    this.sun.target.position.copy(focus);
+    this.sun.position.copy(focus).addScaledVector(SUN_DIR, 220);
+    this.ground.position.x = cam.x;
+    this.ground.position.z = cam.z;
+    const gm = (this.ground.material as THREE.MeshStandardMaterial).map!;
+    gm.offset.set(cam.x / 30, -cam.z / 30);
     // トンネルの中は暗くする
     const tun = TUNNELS.some((t) => s > t.from + 4 && s < t.to - 4);
     if (tun !== this.inTunnel) {
       this.inTunnel = tun;
       const fog = this.scene.fog as THREE.Fog;
-      const col = tun ? this.dark : this.sky;
+      const col = tun ? this.dark : this.haze;
       (this.scene.background as THREE.Color).copy(col);
       fog.color.copy(col);
-      fog.near = tun ? 20 : 300;
-      fog.far = tun ? 700 : 4800;
+      fog.near = tun ? 20 : 400;
+      fog.far = tun ? 700 : 5200;
+      this.sky.visible = !tun;
+      this.sun.intensity = tun ? 0 : 2.4;
+      this.scene.environmentIntensity = tun ? 0.12 : 0.45;
     }
     this.fuji.visible = !tun && s > STATION_POS[4] && s < STATION_POS[8];
-    // すれちがう電車
     if (this.oncoming.visible) {
       this.oncS -= (270 / 3.6) * dt;
       pathPos(this.oncS, OTHER, 0, this.oncoming.position);
@@ -685,6 +856,7 @@ export class World {
       disposeChunk(c);
     }
     this.chunks.clear();
+    this.scene.environment?.dispose();
     this.renderer.dispose();
   }
 }

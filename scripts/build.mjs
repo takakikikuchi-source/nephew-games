@@ -35,6 +35,7 @@ async function main() {
       write: false,
       charset: 'utf8',
       logLevel: 'warning',
+      loader: { '.jpg': 'dataurl' },
     };
     if (watch) {
       const ctx = await context({

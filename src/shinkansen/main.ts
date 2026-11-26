@@ -217,6 +217,8 @@ interface Game {
   audio: TrainAudio;
   timer: THREE.Timer;
   t: number;
+  perfSum: number;
+  perfN: number;
   paused: boolean;
   busy: boolean;
   guideUntil: number;
@@ -234,6 +236,8 @@ interface Game {
 let game: Game | null = null;
 // テスト用の早送り（URLに ?fast=4 などを付けたときだけ）
 const FAST = Math.max(1, Math.min(20, Number(new URLSearchParams(location.search).get('fast')) || 1));
+// テスト用：?hq=1 なら、重くても影を切らない
+const FORCE_HQ = new URLSearchParams(location.search).get('hq') === '1';
 
 function gaugeSvg(): string {
   const cx = 120;
@@ -338,6 +342,8 @@ async function startGame(c: Course): Promise<void> {
     audio,
     timer: new THREE.Timer(),
     t: 0,
+    perfSum: 0,
+    perfN: 0,
     paused: false,
     busy: false,
     guideUntil: 0,
@@ -617,8 +623,15 @@ function loop(): void {
   if (!game) return;
   const g = game;
   g.timer.update(); // 引数なしで呼ぶ（タブを戻したときにマイナスの時間にならないように）
-  const dt = Math.min(Math.max(g.timer.getDelta(), 0), 0.05);
+  const rawDt = Math.max(g.timer.getDelta(), 0);
+  const dt = Math.min(rawDt, 0.05);
   if (g.paused) return;
+  // はじめの数秒で なめらかさを はかり、重いPCなら 影を切って 軽くする
+  if (!FORCE_HQ && !g.world.lowQuality && g.t > 2 && g.t < 6) {
+    g.perfSum += rawDt;
+    g.perfN++;
+    if (g.t > 5.5 && g.perfN > 0 && g.perfSum / g.perfN > 1 / 32) g.world.setLowQuality();
+  }
   g.t += dt;
   pollGamepad();
   const sim = g.sim;
