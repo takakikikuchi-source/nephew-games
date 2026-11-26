@@ -63,7 +63,8 @@ export default async function ({ page, shot, click, root }) {
   await clearDialogs();
   // トレーニング
   await click('[data-act="train"]');
-  await click('[data-stat="atk"]');
+  await shot('06b-train-pick');
+  await click('[data-stat="res"]');
   for (let i = 0; i < 3; i++) {
     await page.waitForTimeout(400);
     await click('#tstop');
@@ -78,12 +79,8 @@ export default async function ({ page, shot, click, root }) {
   await shot('08-battle');
   for (let t = 0; t < 80; t++) {
     if (await page.locator('.dlg-back').count()) break;
-    const tgt = page.locator('.unit.targetable').first();
-    if (await tgt.count()) await tgt.click();
-    else {
-      const mv = page.locator('#cmd [data-mv]').first();
-      if (await mv.count()) await mv.click();
-    }
+    const mv = page.locator('#cmd [data-mv]').first();
+    if (await mv.count()) await mv.click();
     await page.waitForTimeout(400);
   }
   await shot('09-battle-end');
@@ -114,12 +111,22 @@ export default async function ({ page, shot, click, root }) {
   await click('[data-boss="0"]');
   await page.waitForTimeout(1200);
   await shot('11-boss');
-  for (let t = 0; t < 120; t++) {
+  let swapped = false;
+  for (let t = 0; t < 200; t++) {
     if (await page.locator('.dlg-back').count()) break;
+    const pick = page.locator('#cmd [data-to]').first();
+    const swap = page.locator('#cmd [data-swap]:not([disabled])');
     const mv = page.locator('#cmd [data-mv]').first();
-    if (await mv.count()) await mv.click();
+    if (await pick.count()) {
+      await shot('11b-switch');
+      await pick.click();
+    } else if (!swapped && (await swap.count())) {
+      swapped = true;
+      await swap.click();
+    } else if (await mv.count()) await mv.click();
     await page.waitForTimeout(350);
   }
+  if (!swapped) throw new Error('こうたい ボタンが でなかった');
   await shot('12-boss-end');
   await clearDialogs();
   await click('[data-back="home"]');

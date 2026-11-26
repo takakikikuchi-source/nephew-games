@@ -23,7 +23,7 @@ import {
 } from './data';
 import { bossSvg, creatureSvg, eggSvg } from './art';
 import * as G from './state';
-import { TeamBattle, markLabels, type BattleEvent, type Choice } from './battle';
+import { Battle, markLabels, type BattleEvent, type Choice, type Side, type Unit } from './battle';
 
 const css = document.createElement('style');
 css.textContent = PROFILE_CSS + COMMON_CSS;
@@ -172,12 +172,15 @@ function statCard(k: StatKey, c: G.Creature): string {
     return `<div class="scard" style="--sc:${info.color}"><div class="sname">${info.icon} ${info.name}</div>
       <div class="sval">${c.hp}<small> / ${st.maxHp}</small></div>
       <div class="sbar"><div style="width:${pct}%;background:${pct < 34 ? '#ff6b6b' : '#51cf66'}"></div></div>
-      <div class="sbonus">ごはん・トレーニングで +${bonus}</div></div>`;
+      <div class="sbonus">そだてて +${bonus}</div></div>`;
   }
-  const v = k === 'atk' ? st.atk : st.def;
-  return `<div class="scard" style="--sc:${info.color}"><div class="sname">${info.icon} ${info.name}</div>
-    <div class="sval">${v}</div><div class="sbar"><div style="width:${Math.min(100, v)}%;background:${info.color}"></div></div>
-    <div class="sbonus">ごはん・トレーニングで +${bonus}</div></div>`;
+  const v = st[k as Exclude<StatKey, 'hp'>];
+  // どくたいせいの バーは「どくの ききめを どれだけ へらせるか」（さいだい 75%）
+  const bar = k === 'res' ? (G.resistFrac(v) / 0.75) * 100 : Math.min(100, v);
+  const note = k === 'res' ? `どくの ききめ −${Math.round(G.resistFrac(v) * 100)}%・` : '';
+  return `<div class="scard ${k === 'spd' || k === 'res' ? 'wide' : ''}" style="--sc:${info.color}"><div class="sname">${info.icon} ${info.name}</div>
+    <div class="sval">${v}</div><div class="sbar"><div style="width:${bar}%;background:${info.color}"></div></div>
+    <div class="sbonus">${note}そだてて +${bonus}</div></div>`;
 }
 
 const dots = (n: number, max: number) => '●'.repeat(Math.min(n, max)) + '○'.repeat(Math.max(0, max - n));
@@ -325,13 +328,15 @@ function openFeed(c: G.Creature): void {
   });
 }
 
+const TRAIN_HINT: Partial<Record<StatKey, string>> = { spd: 'さきに うごく', res: 'どくに つよく' };
+
 function openTraining(c: G.Creature): void {
   if (c.trainsToday >= G.MAX_TRAINS) return toast('きょうは もう つかれた みたい。ねて やすもう！');
   sfx('click');
   const st = G.stats(c);
-  const cur: Record<StatKey, number> = { hp: st.maxHp, atk: st.atk, def: st.def };
+  const cur: Record<StatKey, number> = { hp: st.maxHp, atk: st.atk, def: st.def, spd: st.spd, res: st.res };
   const m = modal(rb(`<div class="dlg-body"><h3 style="margin:0 0 12px">なにを きたえる？</h3>
-    <div class="statpick">${STAT_KEYS.map((k) => `<button class="btn" data-stat="${k}">${STAT_INFO[k].icon} ${STAT_INFO[k].name}<br><small>いま ${cur[k]}</small></button>`).join('')}</div></div>
+    <div class="statpick">${STAT_KEYS.map((k) => `<button class="btn" data-stat="${k}">${STAT_INFO[k].icon} ${STAT_INFO[k].name}<br><small>いま ${cur[k]}${TRAIN_HINT[k] ? `・${TRAIN_HINT[k]}` : ''}</small></button>`).join('')}</div></div>
     <div class="dlg-btns"><button class="btn" data-x>やめる</button></div>`));
   m.el.querySelector<HTMLButtonElement>('[data-x]')!.onclick = () => m.close();
   m.el.querySelectorAll<HTMLButtonElement>('[data-stat]').forEach((b) => (b.onclick = () => runTiming(c, b.dataset.stat as StatKey, m)));
@@ -384,7 +389,7 @@ function runTiming(c: G.Creature, stat: StatKey, m: { el: HTMLElement; close: ()
       const gain = G.applyTraining(c, stat, total);
       persist();
       sfx('levelup');
-      res.innerHTML = rb(`${STAT_INFO[stat].icon} ${STAT_INFO[stat].name}が <b>+${stat === 'hp' ? gain * G.HP_PER_POINT : gain}</b> あがった！`);
+      res.innerHTML = rb(`${STAT_INFO[stat].icon} ${STAT_INFO[stat].name}が <b>+${gain}</b> あがった！`);
       await wait(1400);
       m.close();
       renderHome();
@@ -666,40 +671,54 @@ function renderBattleSelect(): void {
   show('s-boss');
 }
 
-// ======================= バトル =======================
-function unitCard(side: 'p' | 'e', i: number, name: string, lv: number, hp: number, max: number, art: string): string {
-  return `<div class="unit ${side}" data-side="${side}" data-idx="${i}">
-    <div class="uhp"><div class="unm"><span>${name}</span><span>Lv${lv}</span></div>
-      <div class="track"><div class="fill" style="width:${(hp / max) * 100}%"></div></div>
-      <div class="uhpn">${hp}/${max}</div><div class="marks"></div></div>
+// ======================= バトル（1たい1・こうたい あり） =======================
+function unitCard(side: 'p' | 'e', u: Unit, art: string): string {
+  return `<div class="unit ${side}" data-side="${side}">
+    <div class="uhp"><div class="unm"><span>${u.name}</span><span>Lv${u.level}</span></div>
+      <div class="track"><div class="fill"></div></div>
+      <div class="uhpn"></div><div class="marks"></div></div>
     <div class="pic">${art}</div></div>`;
 }
 
 function startBattle(team: G.Creature[], wild: { species: string; level: number }[] | null, bossIndex: number | null): void {
   sfx('click');
   bgm.play(BATTLE_SONG);
-  const battle = new TeamBattle(team, wild, bossIndex);
+  const battle = new Battle(team, wild, bossIndex);
   const bg = bossIndex != null ? BOSSES[bossIndex].bg : AREAS[AREAS.findIndex((a) => SPECIES[wild![0].species].area === a.id)]?.bg ?? AREAS[0].bg;
+  const foeArt = (u: Unit) => (bossIndex != null ? bossSvg(BOSSES[bossIndex].id) : creatureSvg(u.species!, 3));
+  const myArt = (u: Unit, flip = true) => artOf(team[u.idx], flip);
   const el = scr('s-battle');
+  const hello = bossIndex != null ? `${BOSSES[bossIndex].name}が あらわれた！` : `やせいの ${battle.foe().name}が あらわれた！`;
   el.innerHTML = rb(`
-  <div class="arena" style="background:${bg}">
-    <div class="row enemies">${battle.enemies
-      .map((u) => unitCard('e', u.idx, u.name, u.level, u.hp, u.maxHp, bossIndex != null ? bossSvg(BOSSES[bossIndex].id) : creatureSvg(u.species!, 3)))
-      .join('')}</div>
-    <div class="row players">${battle.players
-      .map((u, i) => unitCard('p', u.idx, u.name, u.level, u.hp, u.maxHp, artOf(team[i], true)))
-      .join('')}</div>
+  <div class="arena duel" style="background:${bg}">
+    <div class="side foe" id="foe"></div>
+    <div class="side me" id="me"></div>
+    <div class="bench" id="bench"></div>
   </div>
   <div class="bpanel">
-    <div class="msg" id="bmsg">${bossIndex != null ? `${BOSSES[bossIndex].name}が あらわれた！` : `やせいの ${battle.enemies.map((e) => e.name).join('と ')}が あらわれた！`}</div>
+    <div class="msg" id="bmsg">${hello}</div>
     <div class="cmd" id="cmd"></div>
   </div>`);
   const msg = el.querySelector<HTMLElement>('#bmsg')!;
   const cmd = el.querySelector<HTMLElement>('#cmd')!;
-  const unitEl = (side: string, idx: number) => el.querySelector<HTMLElement>(`.unit[data-side="${side}"][data-idx="${idx}"]`)!;
+  const unitEl = (side: Side) => el.querySelector<HTMLElement>(`.unit[data-side="${side}"]`)!;
+  const drawSide = (side: Side) => {
+    const u = side === 'p' ? battle.me() : battle.foe();
+    el.querySelector<HTMLElement>(side === 'p' ? '#me' : '#foe')!.innerHTML = rb(unitCard(side, u, side === 'p' ? myArt(u) : foeArt(u)));
+  };
+  const drawBench = () => {
+    const others = battle.players.filter((u) => u.idx !== battle.active.p);
+    el.querySelector<HTMLElement>('#bench')!.innerHTML = others.length
+      ? rb(`<div class="bench-ttl">まっている なかま</div><div class="bench-row">${others
+          .map((u) => `<div class="bslot ${u.hp <= 0 ? 'ko' : ''}"><div class="bpic">${myArt(u, false)}</div><div class="bnm">${u.name}</div>
+            <div class="thp"><span style="width:${(u.hp / u.maxHp) * 100}%"></span></div></div>`)
+          .join('')}</div>`)
+      : '';
+  };
   const refresh = () => {
-    for (const u of [...battle.players, ...battle.enemies]) {
-      const ue = unitEl(u.side, u.idx);
+    for (const side of ['p', 'e'] as Side[]) {
+      const u = side === 'p' ? battle.me() : battle.foe();
+      const ue = unitEl(side);
       const pct = (u.hp / u.maxHp) * 100;
       const fill = ue.querySelector<HTMLElement>('.fill')!;
       fill.style.width = `${pct}%`;
@@ -708,54 +727,69 @@ function startBattle(team: G.Creature[], wild: { species: string; level: number 
       ue.querySelector<HTMLElement>('.marks')!.innerHTML = markLabels(u).map(([l, c]) => `<span style="background:${c}">${l}</span>`).join('');
       ue.classList.toggle('ko', u.hp <= 0);
     }
+    drawBench();
   };
-  let choices: Choice[] = [];
-  let actor = 0;
-  const nextActor = () => {
-    while (actor < battle.players.length && battle.players[actor].hp <= 0) actor++;
-    if (actor >= battle.players.length) return void runTurn();
-    const u = battle.players[actor];
-    el.querySelectorAll('.unit.p').forEach((x) => x.classList.toggle('active', Number((x as HTMLElement).dataset.idx) === actor));
-    msg.innerHTML = rb(`${esc(u.name)}の ばん。わざを えらんでね`);
+  const floatText = (side: Side, text: string, cls: string) => {
+    const r = unitEl(side).querySelector<HTMLElement>('.pic')!.getBoundingClientRect();
+    const d = document.createElement('div');
+    d.className = `dmg ${cls}`;
+    d.textContent = text;
+    d.style.left = `${r.left + r.width / 2 - 30}px`;
+    d.style.top = `${r.top + r.height / 3}px`;
+    document.body.appendChild(d);
+    setTimeout(() => d.remove(), 1000);
+  };
+  const menu = (): void => {
+    if (battle.over) return;
+    if (battle.needSendOut()) return void pickSendOut();
+    const u = battle.me();
+    const canSwap = battle.benchAlive().length > 0;
+    msg.innerHTML = rb(`${esc(u.name)}の ばん。どうする？`);
     cmd.innerHTML = rb(
       u.moves.map((m, i) => `<button class="bmove" data-mv="${i}">${m.types.map((t) => PTYPES[t].icon).join('') || '👊'} ${esc(m.name)}</button>`).join('') +
-        `<button class="bmove run" data-run>🏃 にげる</button>`,
+        `<button class="bmove swap" data-swap ${canSwap ? '' : 'disabled'}>🔁 こうたい</button><button class="bmove run" data-run>🏃 にげる</button>`,
     );
-    cmd.querySelectorAll<HTMLButtonElement>('[data-mv]').forEach((b) => (b.onclick = () => chooseTarget(Number(b.dataset.mv))));
+    cmd.querySelectorAll<HTMLButtonElement>('[data-mv]').forEach((b) => (b.onclick = () => void runTurn({ kind: 'move', move: Number(b.dataset.mv) })));
+    cmd.querySelector<HTMLButtonElement>('[data-swap]')!.onclick = () => openSwitch(false);
     cmd.querySelector<HTMLButtonElement>('[data-run]')!.onclick = () => void runAway();
   };
-  const chooseTarget = (mv: number) => {
+  // こうたい（forced：たおれたので つぎを だす）
+  const openSwitch = (forced: boolean) => {
     sfx('click');
-    const alive = battle.alive('e');
-    if (alive.length === 1) {
-      choices[actor] = { move: mv, target: alive[0].idx };
-      actor++;
-      return nextActor();
-    }
-    msg.innerHTML = 'だれを ねらう？ てきを タップしてね';
-    cmd.innerHTML = '';
-    alive.forEach((e) => {
-      const ue = unitEl('e', e.idx);
-      ue.classList.add('targetable');
-      ue.onclick = () => {
-        el.querySelectorAll('.unit.e').forEach((x) => {
-          x.classList.remove('targetable');
-          (x as HTMLElement).onclick = null;
-        });
-        choices[actor] = { move: mv, target: e.idx };
-        actor++;
-        nextActor();
+    msg.innerHTML = rb(forced ? `${esc(battle.me().name)}は たおれた… つぎは だれを だす？` : 'だれと こうたいする？（こうたいは こうげきより さきに できるよ）');
+    cmd.innerHTML = rb(
+      battle
+        .benchAlive()
+        .map((u) => `<button class="bmove pick" data-to="${u.idx}"><span class="bm-pic">${myArt(u, false)}</span>${esc(u.name)}<small>${u.hp}/${u.maxHp}</small></button>`)
+        .join('') + (forced ? '' : '<button class="bmove run" data-back>もどる</button>'),
+    );
+    cmd.querySelectorAll<HTMLButtonElement>('[data-to]').forEach((b) => {
+      b.onclick = async () => {
+        const to = Number(b.dataset.to);
+        if (forced) {
+          cmd.innerHTML = '';
+          await play(battle.sendOut(to));
+          menu();
+        } else void runTurn({ kind: 'switch', to });
       };
     });
+    const back = cmd.querySelector<HTMLButtonElement>('[data-back]');
+    if (back) back.onclick = () => menu();
   };
-  const runTurn = async () => {
-    el.querySelectorAll('.unit.p').forEach((x) => x.classList.remove('active'));
+  const pickSendOut = async () => {
+    const bench = battle.benchAlive();
+    if (bench.length === 1) {
+      cmd.innerHTML = '';
+      await play(battle.sendOut(bench[0].idx));
+      return menu();
+    }
+    openSwitch(true);
+  };
+  const runTurn = async (choice: Choice) => {
+    sfx('click');
     cmd.innerHTML = '';
-    const events = battle.turn(choices);
-    choices = [];
-    actor = 0;
-    await play(events);
-    if (!battle.over) nextActor();
+    await play(battle.turn(choice));
+    menu();
   };
   const play = async (events: BattleEvent[]) => {
     for (const e of events) {
@@ -763,22 +797,23 @@ function startBattle(team: G.Creature[], wild: { species: string; level: number 
         msg.innerHTML = rb(esc(e.text));
         await wait(750);
       } else if (e.kind === 'hit') {
-        const ue = unitEl(e.side, e.idx);
-        const pic = ue.querySelector<HTMLElement>('.pic')!;
+        const pic = unitEl(e.side).querySelector<HTMLElement>('.pic')!;
         pic.classList.remove('shake', 'flash');
         void pic.offsetWidth;
         pic.classList.add('shake', 'flash');
         sfx('hit');
-        const r = pic.getBoundingClientRect();
-        const d = document.createElement('div');
-        d.className = `dmg ${e.crit ? 'crit' : ''}`;
-        d.textContent = `-${e.amount}`;
-        d.style.left = `${r.left + r.width / 2 - 30}px`;
-        d.style.top = `${r.top + r.height / 3}px`;
-        document.body.appendChild(d);
-        setTimeout(() => d.remove(), 1000);
+        floatText(e.side, `-${e.amount}`, e.crit ? 'crit' : '');
         refresh();
         await wait(450);
+      } else if (e.kind === 'dodge') {
+        sfx('miss');
+        floatText(e.side, 'ミス！', 'miss');
+        await wait(300);
+      } else if (e.kind === 'switch') {
+        drawSide(e.side);
+        refresh();
+        sfx('pop');
+        await wait(300);
       } else if (e.kind === 'mark' || e.kind === 'ko') {
         refresh();
         sfx(e.kind === 'ko' ? 'miss' : 'pop');
@@ -791,7 +826,7 @@ function startBattle(team: G.Creature[], wild: { species: string; level: number 
     }
     refresh();
   };
-  const writeBack = () => battle.players.forEach((u, i) => (team[i].hp = u.hp));
+  const writeBack = () => battle.players.forEach((u) => (team[u.idx].hp = u.hp));
   const runAway = async () => {
     const a = await dialog('にげる？', [
       { label: 'にげる', value: 'yes' },
@@ -833,9 +868,15 @@ function startBattle(team: G.Creature[], wild: { species: string; level: number 
     bgm.play(HOME_SONG);
     renderBattleSelect();
   };
+  drawSide('e');
+  drawSide('p');
   refresh();
   show('s-battle');
-  setTimeout(nextActor, 900);
+  setTimeout(async () => {
+    msg.innerHTML = rb(`いけ！ ${esc(battle.me().name)}！`);
+    await wait(700);
+    menu();
+  }, 900);
 }
 
 // ======================= なかま（チームへんしゅう） =======================

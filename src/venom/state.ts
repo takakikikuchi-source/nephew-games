@@ -19,7 +19,7 @@ import {
   type StatKey,
 } from './data';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 export const GACHA_COST = 100;
 export const MAX_MEALS = 3;
 export const MAX_TRAINS = 3;
@@ -28,6 +28,9 @@ export const MAX_LEVEL = 30;
 export const TEAM_SIZE = 3;
 export const ESSENCE_EXP = 40;
 export const HP_PER_POINT = 3;
+export const BASE_RES = 10; // どくたいせいの はじめの あたい
+export const RES_PER_POINT = 2; // どくたいせいは トレーニング1かいで 2ばい のびる
+export const WILD_REWARD = 1.8; // 1たい1で てきが 1ぴきに なった ぶん、ほうびを ふやす
 
 export interface Move {
   id: string;
@@ -73,6 +76,7 @@ export interface Stats {
   atk: number;
   def: number;
   spd: number;
+  res: number;
 }
 
 const key = (pid: ProfileId) => `venom.${pid}`;
@@ -109,11 +113,15 @@ export function statsFor(species: string, level: number, bonus?: Record<StatKey,
     maxHp: Math.round(b.hp * f) + (bonus?.hp ?? 0) * HP_PER_POINT,
     atk: Math.round(b.atk * f) + (bonus?.atk ?? 0),
     def: Math.round(b.def * f) + (bonus?.def ?? 0),
-    spd: Math.round(b.spd * f),
+    spd: Math.round(b.spd * f) + (bonus?.spd ?? 0),
+    res: BASE_RES + (bonus?.res ?? 0),
   };
 }
 
 export const stats = (c: Creature): Stats => statsFor(c.species, c.level, c.bonus);
+
+// どくたいせい → どくの ききめを へらす わりあい（50で はんぶん、さいだい 75%）
+export const resistFrac = (res: number): number => Math.min(0.75, res / (res + 50));
 
 // 見た目の段階：Lv1〜9 あかちゃん、10〜19 こども、20〜 おとな
 export function stageOf(c: Creature): number {
@@ -146,7 +154,7 @@ function migrate1to2(d: Record<string, unknown>): Record<string, unknown> {
     .filter((c) => SPECIES[c.species])
     .map((c) => {
       const level = c.stage >= 3 ? 20 : c.stage === 2 ? 10 : 1;
-      const bonus = { hp: c.train?.hp ?? 0, atk: c.train?.doku ?? 0, def: c.train?.def ?? 0 };
+      const bonus = { hp: c.train?.hp ?? 0, atk: c.train?.doku ?? 0, def: c.train?.def ?? 0, spd: 0, res: 0 };
       return {
         uid: c.uid,
         species: c.species,
@@ -172,7 +180,13 @@ function migrate1to2(d: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-const MIGRATIONS: Record<number, (d: Record<string, unknown>) => Record<string, unknown>> = { 1: migrate1to2 };
+// v3：はやさ・どくたいせいの のびしろを たす
+function migrate2to3(d: Record<string, unknown>): Record<string, unknown> {
+  const creatures = ((d.creatures as Creature[] | undefined) ?? []).map((c) => ({ ...c, bonus: { ...c.bonus, spd: c.bonus?.spd ?? 0, res: c.bonus?.res ?? 0 } }));
+  return { ...d, v: 3, creatures };
+}
+
+const MIGRATIONS: Record<number, (d: Record<string, unknown>) => Record<string, unknown>> = { 1: migrate1to2, 2: migrate2to3 };
 
 export type LoadResult = { ok: true; save: VenomSave } | { ok: false; reason: 'newer' };
 
@@ -188,6 +202,10 @@ export function loadGame(pid: ProfileId): LoadResult {
   const s = { ...newSave(), ...(d as unknown as VenomSave), v: SAVE_VERSION };
   // こわれた データを はずす
   s.creatures = s.creatures.filter((c) => c && SPECIES[c.species]);
+  for (const c of s.creatures) {
+    const b: Partial<Record<StatKey, number>> = c.bonus ?? {};
+    c.bonus = { hp: b.hp ?? 0, atk: b.atk ?? 0, def: b.def ?? 0, spd: b.spd ?? 0, res: b.res ?? 0 };
+  }
   s.team = s.team.filter((u) => s.creatures.some((c) => c.uid === u));
   if (s.focus && !s.creatures.some((c) => c.uid === s.focus)) s.focus = s.creatures[0]?.uid ?? null;
   return { ok: true, save: s };
@@ -224,7 +242,7 @@ export function basicMove(): Move {
 }
 
 function newCreature(id: string): Creature {
-  const bonus = { hp: 0, atk: 0, def: 0 };
+  const bonus = { hp: 0, atk: 0, def: 0, spd: 0, res: 0 };
   return {
     uid: rid(),
     species: id,
@@ -325,12 +343,14 @@ export function foodChoices(c: Creature): FoodId[] {
 }
 
 // ---------------- トレーニング ----------------
+// もどりちは がめんに だす「ふえた かず」（たいりょくは ×3、どくたいせいは ×2）
 export function applyTraining(c: Creature, stat: StatKey, total: number): number {
   const gain = 1 + Math.floor(total / 3); // 0〜9点 → 1〜4
-  c.bonus[stat] += gain;
+  const pts = stat === 'res' ? gain * RES_PER_POINT : gain;
+  c.bonus[stat] += pts;
   if (stat === 'hp') c.hp += gain * HP_PER_POINT;
   c.trainsToday++;
-  return gain;
+  return stat === 'hp' ? gain * HP_PER_POINT : pts;
 }
 
 // ---------------- エキス ----------------
@@ -407,12 +427,12 @@ export function learn(c: Creature, m: Move, replaceIndex?: number): void {
 
 // ---------------- バトルの ほうび ----------------
 export function wildReward(s: VenomSave, enemies: { species: string; level: number }[], survivors: Creature[]): { exp: number; coins: number; moto: PType[]; ups: LevelUp[] } {
-  const exp = enemies.reduce((a, e) => a + enemyExp(e.level), 0);
-  const coins = enemies.reduce((a, e) => a + 5 + 2 * e.level, 0);
+  const exp = Math.round(enemies.reduce((a, e) => a + enemyExp(e.level), 0) * WILD_REWARD);
+  const coins = Math.round(enemies.reduce((a, e) => a + 5 + 2 * e.level, 0) * WILD_REWARD);
   const moto: PType[] = [];
   for (const e of enemies) {
     if (!s.met.includes(e.species)) s.met.push(e.species);
-    if (Math.random() < 0.4) {
+    if (Math.random() < 0.6) {
       const t = SPECIES[e.species].types[0];
       s.moto[t]++;
       moto.push(t);
@@ -440,8 +460,7 @@ export function bossReward(s: VenomSave, bossIndex: number, survivors: Creature[
 export function rollWild(areaIndex: number): { species: string; level: number }[] {
   const a = AREAS[areaIndex];
   const pool = SPECIES_IDS.filter((id) => SPECIES[id].area === a.id);
-  const n = Math.random() < 0.45 ? 1 : Math.random() < 0.7 ? 2 : 3;
-  return Array.from({ length: n }, () => ({
+  return Array.from({ length: 1 }, () => ({
     species: pool[Math.floor(Math.random() * pool.length)],
     level: a.levels[0] + Math.floor(Math.random() * (a.levels[1] - a.levels[0] + 1)),
   }));

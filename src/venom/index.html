@@ -75,15 +75,15 @@ rt{font-size:.5em}
 .habitat.blacklight .deco{opacity:.15}
 .habitat.blacklight .creature svg{filter:grayscale(1) brightness(1.6) sepia(1) hue-rotate(120deg) saturate(5) drop-shadow(0 0 14px #5fffe0)}
 
-.panel{flex:1;background:var(--panel);border-radius:24px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:320px;overflow:auto}
+.panel{flex:1;background:var(--panel);border-radius:24px;padding:14px 16px;display:flex;flex-direction:column;gap:9px;min-width:320px;overflow:auto}
 .daybox{display:flex;justify-content:space-between;align-items:center;font-size:20px;font-weight:700}
 .bar{display:grid;grid-template-columns:96px 1fr 44px;align-items:center;gap:8px;font-size:18px;font-weight:700}
 .bar .track{height:18px;background:#120d24;border-radius:999px;overflow:hidden}
 .bar .fill{height:100%;border-radius:999px;transition:width .4s}
 .stats4{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;font-size:16px;color:var(--sub);background:var(--panel2);padding:10px 14px;border-radius:14px}
 .stats4 b{color:#fff;font-size:18px}
-.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:auto}
-.act{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:700;padding:12px 14px;border-radius:16px;border:none;background:#fff;color:#2b2150;box-shadow:0 5px 0 #b9add9}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:auto}
+.act{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:700;padding:9px 14px;border-radius:16px;border:none;background:#fff;color:#2b2150;box-shadow:0 5px 0 #b9add9}
 .act:active{transform:translateY(4px);box-shadow:0 1px 0 #b9add9}
 .act .ic{font-size:28px}
 .act.sleep{background:#4c3d99;color:#fff;box-shadow:0 5px 0 #2c2266}
@@ -187,7 +187,11 @@ rt{font-size:.5em}
 .lv{font-size:28px;font-weight:900;color:var(--accent);background:#1b1535;border-radius:12px;padding:2px 12px}
 .xpbar{height:12px;background:#120d24;border-radius:999px;overflow:hidden}
 .xpbar div{height:100%;background:linear-gradient(90deg,#b197fc,#ff6bd6)}
-.scards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.scards{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px 10px}
+.scard{grid-column:span 2}
+.scard.wide{grid-column:span 3;display:grid;grid-template-columns:auto 1fr;align-items:center;column-gap:10px;row-gap:2px;padding:6px 12px;border-top:none;border-left:5px solid var(--sc)}
+.scard.wide .sname{grid-column:1}.scard.wide .sval{grid-column:2;text-align:right;font-size:clamp(20px,2vw,28px)}
+.scard.wide .sbar,.scard.wide .sbonus{grid-column:1/-1}
 .scard{background:var(--panel2);border-radius:16px;padding:10px 12px;border-top:5px solid var(--sc);display:flex;flex-direction:column;gap:4px;min-width:0}
 .sname{font-size:17px;font-weight:700}
 .sval{font-size:clamp(24px,2.5vw,36px);font-weight:900;line-height:1.1;font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -221,7 +225,26 @@ rt{font-size:.5em}
 .btn.small{font-size:15px;padding:8px 12px}
 .card.zk{width:180px}
 .card.zk .pic{width:120px;height:120px}
-/* チームバトル */
+/* バトル（1たい1） */
+#s-battle .arena.duel{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;padding:14px 18px;gap:6px}
+.duel .side{display:flex;justify-content:center;min-height:0}
+.duel .foe{grid-column:2;grid-row:1;align-items:flex-start}
+.duel .me{grid-column:1;grid-row:2;align-items:flex-end}
+.duel .bench{grid-column:2;grid-row:2;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px}
+.duel .unit .pic{width:clamp(140px,19vw,240px)}
+.bench-ttl{font-size:14px;font-weight:700;color:#fff;background:rgba(20,14,40,.7);border-radius:999px;padding:2px 12px}
+.bench-row{display:flex;gap:10px}
+.bslot{background:rgba(20,14,40,.78);border-radius:14px;padding:6px 8px;width:112px;color:#fff;font-size:13px;font-weight:700;text-align:center}
+.bslot .bpic{width:64px;height:64px;margin:auto}
+.bslot .bpic svg{width:100%;height:100%}
+.bslot.ko{opacity:.35}
+.bnm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bmove.swap{background:#d3f9d8}
+.bmove.pick{justify-content:flex-start}
+.bmove.pick small{margin-left:auto;color:#6b5fa0}
+.bm-pic{width:40px;height:40px;flex:none}
+.bm-pic svg{width:100%;height:100%}
+.dmg.miss{color:#e7f5ff;-webkit-text-stroke:2px #1c7ed6;font-size:34px}
 #s-battle .arena{display:flex;flex-direction:column;justify-content:space-between;padding:14px 18px}
 #s-battle .row{display:flex;gap:18px;justify-content:center;flex-wrap:wrap}
 .unit{display:flex;flex-direction:column;align-items:center;gap:6px;border-radius:18px;padding:6px;transition:transform .15s}

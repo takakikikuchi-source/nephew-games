@@ -48,13 +48,17 @@ export const PTYPES: Record<PType, PTypeInfo> = {
   },
 };
 
-// ---------------- 強さ（3つ） ----------------
-export type StatKey = 'hp' | 'atk' | 'def';
-export const STAT_KEYS: StatKey[] = ['hp', 'atk', 'def'];
+// ---------------- 強さ（5つ） ----------------
+// はやさ・どくたいせいは トレーニングで だけ のびる（ごはんでは のびない）
+export type StatKey = 'hp' | 'atk' | 'def' | 'spd' | 'res';
+export type FoodStat = 'hp' | 'atk' | 'def';
+export const STAT_KEYS: StatKey[] = ['hp', 'atk', 'def', 'spd', 'res'];
 export const STAT_INFO: Record<StatKey, { name: string; icon: string; color: string }> = {
   hp: { name: 'たいりょく', icon: '❤️', color: '#ff6b6b' },
   atk: { name: 'こうげき', icon: '⚔️', color: '#ffa94d' },
   def: { name: 'ぼうぎょ', icon: '🛡️', color: '#4dabf7' },
+  spd: { name: 'はやさ', icon: '💨', color: '#38d9a9' },
+  res: { name: 'どくたいせい', icon: '💊', color: '#b197fc' },
 };
 
 // ---------------- たべもの：たべると強さが上がる ----------------
@@ -65,7 +69,7 @@ export type FoodId =
 export interface Food {
   name: string;
   emoji: string;
-  stat: StatKey;
+  stat: FoodStat;
   gain: number;
   junk?: boolean;
 }
@@ -484,7 +488,6 @@ export interface BossMove {
   name: string;
   power: number;
   hits?: number;
-  all?: boolean; // チーム全員に
   defUp?: number;
   weight: number;
 }
@@ -511,13 +514,13 @@ export const BOSSES: Boss[] = [
     fact: '{長|なが}い あしで どくヘビを けって たおす {鳥|とり}。ける ちからは とても つよい。',
     recLevel: 8,
     resist: {},
-    stats: { hp: 560, atk: 38, def: 20, spd: 30 },
+    stats: { hp: 140, atk: 32, def: 20, spd: 26 },
     moves: [
       { name: 'キック', power: 1.0, weight: 3 },
       { name: 'れんぞくキック', power: 0.6, hits: 2, weight: 2 },
     ],
     reward: { coins: 150, moto: 1, exp: 200 },
-    hint: 'ヘビクイワシは とても すばやい。レベルを あげて、ごはんで たいりょくを ふやそう！',
+    hint: 'ヘビクイワシは とても すばやい。トレーニングで はやさを きたえると さきに うごけて、よけやすく なるよ。ごはんで たいりょくも ふやそう！',
     bg: 'linear-gradient(#ffe8a3,#e9c46a 55%,#b5893b)',
   },
   {
@@ -527,11 +530,11 @@ export const BOSSES: Boss[] = [
     fact: 'ヘビの しびれどく（{神経毒|しんけいどく}）が ききにくい からだを もっている。すばやく うごいて ヘビと たたかう。',
     recLevel: 15,
     resist: { shibire: 0.25 },
-    stats: { hp: 880, atk: 48, def: 26, spd: 32 },
+    stats: { hp: 270, atk: 48, def: 26, spd: 32 },
     moves: [
       { name: 'かみつく', power: 1.0, weight: 3 },
       { name: 'すばやい かみつき', power: 0.7, hits: 2, weight: 2 },
-      { name: 'とびかかる', power: 0.6, all: true, weight: 1 },
+      { name: 'とびかかる', power: 1.3, weight: 1 },
     ],
     reward: { coins: 250, moto: 2, exp: 600 },
     hint: 'マングースには しびれどくが ききにくい！ どくラボで、ちのどくや いたみどくを まぜた どくを つくってみよう。',
@@ -544,11 +547,11 @@ export const BOSSES: Boss[] = [
     fact: 'べつの なまえは ミツアナグマ。コブラの どくにも つよく、かわが とても ぶあつい。ハチの {巣|す}も へいきで おそう。',
     recLevel: 24,
     resist: { shibire: 0.25, itami: 0.25 },
-    stats: { hp: 1600, atk: 64, def: 38, spd: 22 },
+    stats: { hp: 720, atk: 64, def: 38, spd: 22 },
     moves: [
       { name: 'ひっかく', power: 1.0, weight: 4 },
       { name: 'のしかかり', power: 1.4, weight: 2 },
-      { name: 'あばれまわる', power: 0.6, all: true, weight: 1 },
+      { name: 'あばれまわる', power: 1.3, weight: 1 },
       { name: 'ぶあついかわ', power: 0, defUp: 0.3, weight: 1 },
     ],
     reward: { coins: 400, moto: 3, exp: 1500 },

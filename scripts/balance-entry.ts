@@ -1,14 +1,15 @@
 // バランスの確認：レベルごとの「何回で倒せるか」「何回で倒れるか」「何バトルで1レベル」と、勝率を表にする。
 // 実行: node scripts/balance.mjs
 import { AREAS, BOSSES, SPECIES, SPECIES_IDS } from '../src/venom/data';
-import { enemyExp, expToNext, naturalMove, rollWild, statsFor, type Creature, type Move } from '../src/venom/state';
-import { TeamBattle } from '../src/venom/battle';
+import { WILD_REWARD, enemyExp, expToNext, naturalMove, rollWild, statsFor, type Creature, type Move } from '../src/venom/state';
+import { Battle } from '../src/venom/battle';
 
 const K = 50;
 const avg = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
 
 // レベルLまで育てたときの、ごはん・トレーニングで ふえた ぶん（めやす）
-const bonusAt = (L: number) => ({ hp: Math.round(0.6 * L), atk: Math.round(0.6 * L), def: Math.round(0.5 * L) });
+// はやさ・どくたいせいは トレーニングだけなので すこし ひかえめ
+const bonusAt = (L: number) => ({ hp: Math.round(0.6 * L), atk: Math.round(0.6 * L), def: Math.round(0.5 * L), spd: Math.round(0.25 * L), res: Math.round(0.8 * L) });
 
 function makeCreature(species: string, level: number, extra?: Move): Creature {
   const bonus = bonusAt(level);
@@ -31,10 +32,10 @@ function pick<T>(a: T[]): T {
 }
 
 function simulate(team: Creature[], wild: { species: string; level: number }[] | null, boss: number | null): boolean {
-  const b = new TeamBattle(team, wild, boss);
-  for (let t = 0; t < 60 && !b.over; t++) {
-    const target = b.enemies.findIndex((e) => e.hp > 0);
-    b.turn(b.players.map(() => ({ move: 0, target })));
+  const b = new Battle(team, wild, boss);
+  for (let t = 0; t < 200 && !b.over; t++) {
+    if (b.needSendOut()) b.sendOut(b.benchAlive()[0].idx);
+    b.turn({ kind: 'move', move: 0 });
   }
   return b.win;
 }
@@ -54,7 +55,7 @@ for (const L of [1, 3, 5, 8, 10, 12, 15, 18, 20, 24, 28]) {
     }
   }
   const area = Math.max(0, AREAS.findIndex((x, i) => L >= x.levels[0] && (i === AREAS.length - 1 || L < AREAS[i + 1].levels[0])));
-  const battles = expToNext(L) / (1.85 * enemyExp(L));
+  const battles = expToNext(L) / (WILD_REWARD * enemyExp(L));
   let wins = 0;
   const N = 300;
   for (let i = 0; i < N; i++) {
