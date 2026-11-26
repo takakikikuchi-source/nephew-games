@@ -14,6 +14,55 @@ const mirrorX = (d: string) =>
     .replace(/Q\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g, (_m, x1: string, y1: string, x2: string, y2: string) => `Q${240 - Number(x1)} ${y1} ${240 - Number(x2)} ${y2}`);
 const both = (d: string, attrs: string) => `<path d="${d}" ${attrs}/><path d="${mirrorX(d)}" ${attrs}/>`;
 
+// ---------------- 陰影（立体感・質感・影） ----------------
+// 絵ぜんたいに SVG フィルターをかけて、左上からの光で立体に見せる。
+// 高さ = 形のふち（ぼかしたアルファ）＋ 暗い線のみぞ（輪郭や体節）＋ 素材ごとの細かい凹凸。
+type Mat = 'chitin' | 'shell' | 'skin' | 'wart' | 'scale' | 'fur' | 'jelly' | 'egg';
+type MatDef = { round: number; groove: number; nAmt: number; nFreq: string; nType: 'fractalNoise' | 'turbulence'; oct: number; spec: number; exp: number; surf: number };
+const MATS: Record<Mat, MatDef> = {
+  chitin: { round: 4, groove: 0.35, nAmt: 0.05, nFreq: '0.9', nType: 'fractalNoise', oct: 2, spec: 1.1, exp: 22, surf: 7 },
+  shell: { round: 6, groove: 0.2, nAmt: 0.06, nFreq: '0.08 0.6', nType: 'fractalNoise', oct: 2, spec: 1.2, exp: 28, surf: 7 },
+  skin: { round: 6, groove: 0.12, nAmt: 0.05, nFreq: '0.6', nType: 'fractalNoise', oct: 2, spec: 1.0, exp: 16, surf: 7 },
+  wart: { round: 5, groove: 0.15, nAmt: 0.3, nFreq: '0.13', nType: 'fractalNoise', oct: 2, spec: 0.5, exp: 10, surf: 8 },
+  scale: { round: 4, groove: 0.25, nAmt: 0.07, nFreq: '1.3', nType: 'turbulence', oct: 1, spec: 0.8, exp: 16, surf: 7 },
+  fur: { round: 5, groove: 0.15, nAmt: 0.35, nFreq: '1.4 0.18', nType: 'fractalNoise', oct: 2, spec: 0.15, exp: 6, surf: 6 },
+  jelly: { round: 7, groove: 0, nAmt: 0.03, nFreq: '0.5', nType: 'fractalNoise', oct: 1, spec: 1.4, exp: 30, surf: 5 },
+  egg: { round: 10, groove: 0.05, nAmt: 0.04, nFreq: '0.7', nType: 'fractalNoise', oct: 2, spec: 0.9, exp: 24, surf: 9 },
+};
+type Ground = 'ground' | 'water';
+const ELEV = 52; // 光の高さ（度）
+const AZ = 225; // 左上から
+const SPEC_ELEV = 26; // つやは低い光で、ふくらみの肩だけ光らせる
+// flip: 左右反転（バトルの みかた）。CSS で反転すると陰影フィルターが黒くつぶれるので、絵の中で反転する。
+function shade(svg: string, mat: Mat, ground: Ground = 'ground', flip = false): string {
+  const m = MATS[mat];
+  const f = uid('lt');
+  const sh = ground === 'water' ? { dx: 10, dy: 22, blur: 7, op: 0.18 } : { dx: 4, dy: 7, blur: 3.5, op: 0.32 };
+  const light = `<feDistantLight azimuth="${AZ}" elevation="${ELEV}"/>`;
+  const filter = `<filter id="${f}" filterUnits="userSpaceOnUse" x="-10" y="-10" width="260" height="260" color-interpolation-filters="sRGB">
+    <feGaussianBlur in="SourceAlpha" stdDeviation="${m.round}" result="ra"/>
+    <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .3 .59 .11 0 0" result="lum"/>
+    <feGaussianBlur in="lum" stdDeviation="1.2" result="lb"/>
+    <feComposite in="ra" in2="lb" operator="arithmetic" k2="1" k3="${m.groove}" k4="${(-m.groove / 2).toFixed(3)}" result="h1"/>
+    <feTurbulence type="${m.nType}" baseFrequency="${m.nFreq}" numOctaves="${m.oct}" seed="7" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0" result="na"/>
+    <feComposite in="h1" in2="na" operator="arithmetic" k2="1" k3="${m.nAmt}" k4="${(-m.nAmt / 2).toFixed(3)}" result="h"/>
+    <feDiffuseLighting in="h" surfaceScale="${m.surf}" diffuseConstant="${(1 / Math.sin((ELEV * Math.PI) / 180)).toFixed(3)}" lighting-color="#fff" result="d">${light}</feDiffuseLighting>
+    <feSpecularLighting in="h" surfaceScale="${m.surf}" specularConstant="${m.spec}" specularExponent="${m.exp}" lighting-color="#fff" result="s"><feDistantLight azimuth="${AZ}" elevation="${SPEC_ELEV}"/></feSpecularLighting>
+    <feComposite in="SourceGraphic" in2="d" operator="arithmetic" k1="1" result="c"/>
+    <feComposite in="s" in2="SourceAlpha" operator="in" result="s2"/>
+    <feComposite in="c" in2="s2" operator="arithmetic" k2="1" k3=".8" result="lit"/>
+    <feComposite in="lit" in2="SourceAlpha" operator="in" result="body"/>
+    <feGaussianBlur in="SourceAlpha" stdDeviation="${sh.blur}"/>
+    <feOffset dx="${sh.dx}" dy="${sh.dy}"/>
+    <feComponentTransfer result="shadow"><feFuncA type="linear" slope="${sh.op}"/></feComponentTransfer>
+    <feMerge><feMergeNode in="shadow"/><feMergeNode in="body"/></feMerge>
+  </filter>`;
+  const open = svg.indexOf('>') + 1;
+  const close = svg.lastIndexOf('</svg>');
+  return `${svg.slice(0, open)}<defs>${filter}</defs><g filter="url(#${f})">${flip ? '<g transform="matrix(-1 0 0 1 240 0)">' : ''}${svg.slice(open, close)}${flip ? '</g>' : ''}</g></svg>`;
+}
+
 // 色を白っぽくする（あかちゃん用）
 function lighten(hex: string, t: number): string {
   const n = parseInt(hex.slice(1), 16);
@@ -435,10 +484,28 @@ function seasnake(stage: number): string {
   );
 }
 
-export function creatureSvg(id: string, stage: number): string {
+// 体の型ごとの素材と、水の中かどうか
+const MAT_OF: Record<string, [Mat, Ground?]> = {
+  scorpion: ['chitin'], spider: ['chitin'], hornet: ['chitin'], bee: ['chitin'], centipede: ['chitin'],
+  frog: ['skin'], toad: ['wart'], newt: ['skin'], caterpillar: ['skin'], octopus: ['skin', 'water'],
+  coil: ['scale'], cobra: ['scale'], lizard: ['scale'], seasnake: ['scale', 'water'], ray: ['scale', 'water'],
+  lionfish: ['scale', 'water'], puffer: ['skin', 'water'], stonefish: ['wart', 'water'], jelly: ['jelly', 'water'],
+  cone: ['shell'], platypus: ['fur'], loris: ['fur'],
+};
+
+export function creatureSvg(id: string, stage: number, flip = false): string {
   const sp = SPECIES[id];
   if (!sp) return eggSvg('N');
   if (stage <= 0) return eggSvg(sp.rarity);
+  const art = sp.art as string;
+  if (stage === 1 && (art === 'hornet' || art === 'bee')) return shade(larva(), 'skin', 'ground', flip);
+  if (stage === 1 && (art === 'frog' || art === 'toad')) return shade(rawCreature(id, stage), 'skin', 'water', flip);
+  const [mat, ground] = MAT_OF[art] ?? ['skin'];
+  return shade(rawCreature(id, stage), mat, ground, flip);
+}
+
+function rawCreature(id: string, stage: number): string {
+  const sp = SPECIES[id];
   switch (sp.art) {
     case 'scorpion':
       return scorpion(stage, sp.pal);
@@ -488,7 +555,8 @@ export function creatureSvg(id: string, stage: number): string {
 }
 
 // ---------------- たまご ----------------
-export function eggSvg(r: Rarity): string {
+export const eggSvg = (r: Rarity): string => shade(rawEgg(r), 'egg');
+function rawEgg(r: Rarity): string {
   const g = uid('eg');
   const pal =
     r === 'SR'
@@ -503,7 +571,6 @@ export function eggSvg(r: Rarity): string {
       : '';
   return wrap(
     `<defs><radialGradient id="${g}" cx="38%" cy="30%" r="80%"><stop offset="0" stop-color="${pal.a}"/><stop offset="1" stop-color="${pal.b}"/></radialGradient></defs>
-    <ellipse cx="120" cy="210" rx="52" ry="10" fill="rgba(0,0,0,.18)"/>
     <path d="M120 40 C162 40 184 110 184 148 C184 190 156 212 120 212 C84 212 56 190 56 148 C56 110 78 40 120 40 Z" fill="url(#${g})" stroke="${pal.line}" stroke-width="2.5"/>
     ${spots.map(([x, y, s]) => `<circle cx="${x}" cy="${y}" r="${s}" fill="${pal.spot}" opacity="${r === 'SR' ? 0.7 : 0.55}"/>`).join('')}
     <ellipse cx="98" cy="88" rx="12" ry="22" fill="#fff" opacity=".35" transform="rotate(20 98 88)"/>${sparkle}`,
@@ -512,7 +579,8 @@ export function eggSvg(r: Rarity): string {
 }
 
 // ---------------- ボス ----------------
-export function bossSvg(id: BossId): string {
+export const bossSvg = (id: BossId): string => shade(rawBoss(id), 'fur');
+function rawBoss(id: BossId): string {
   if (id === 'hebikui')
     return wrap(
       `<path d="M166 128 L218 172 L210 180 L160 138 Z" fill="#e9ebee" stroke="#555" stroke-width="1.5"/><path d="M206 168 L218 172 L210 180 Z" fill="#111"/>

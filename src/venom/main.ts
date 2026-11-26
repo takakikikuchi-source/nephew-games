@@ -75,7 +75,7 @@ function modal(inner: string): { el: HTMLElement; close: () => void } {
 }
 
 const spName = (c: G.Creature) => (c.hatched ? SPECIES[c.species].name : '？？？の たまご');
-const artOf = (c: G.Creature) => (c.hatched ? creatureSvg(c.species, G.stageOf(c)) : eggSvg(SPECIES[c.species].rarity));
+const artOf = (c: G.Creature, flip = false) => (c.hatched ? creatureSvg(c.species, G.stageOf(c), flip) : eggSvg(SPECIES[c.species].rarity));
 
 function topbar(back?: string): string {
   return `<header class="topbar">
@@ -687,7 +687,7 @@ function startBattle(team: G.Creature[], wild: { species: string; level: number 
       .map((u) => unitCard('e', u.idx, u.name, u.level, u.hp, u.maxHp, bossIndex != null ? bossSvg(BOSSES[bossIndex].id) : creatureSvg(u.species!, 3)))
       .join('')}</div>
     <div class="row players">${battle.players
-      .map((u, i) => unitCard('p', u.idx, u.name, u.level, u.hp, u.maxHp, artOf(team[i])))
+      .map((u, i) => unitCard('p', u.idx, u.name, u.level, u.hp, u.maxHp, artOf(team[i], true)))
       .join('')}</div>
   </div>
   <div class="bpanel">
