@@ -101,7 +101,6 @@ export const COURSES: Course[] = [
   { id: 'h-nagoya', type: 'hikari', from: 12, to: 16, level: 2 },
   { id: 'n-nagoya', type: 'nozomi', from: 0, to: 12, level: 3, note: 'ながい ちょくつう' },
   { id: 'n-osaka', type: 'nozomi', from: 12, to: 16, level: 3 },
-  { id: 'n-all', type: 'nozomi', from: 0, to: 16, level: 3, note: 'とうきょう から しんおおさか まで ぜんぶ！' },
 ];
 
 export function courseStops(c: Course): number[] {

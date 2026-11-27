@@ -18,6 +18,12 @@ export function brakeLabel(n: number): string {
 
 const ATC_DECEL = 0.9; // m/s² ATCが想定するブレーキの強さ
 
+// はやおくり：さいこうそくど ちかくで はしっていて、つぎの えきまで まだ とおい ときだけ 6ばいそく。
+// 1かいの うんてんを 15ふん いないに するため（ながい のぞみの コース）。
+export const FF_SCALE = 6;
+export const FF_MIN_KMH = 200;
+export const FF_DIST = 4000; // m
+
 export interface StopRecord {
   station: number;
   diff: number; // +ならてまえ、-なら行きすぎ（m）
@@ -100,6 +106,7 @@ export class Sim {
   private shortWarned = false;
   private stoppedFor = 0;
   schedule: { arr: number; dep: number }[] = [];
+  wallEstimate = 0; // じょうずに はしった ときの、ほんとうの じかん（びょう・はやおくり こみ）
   records: StopRecord[] = [];
   onAtcChange: ((limit: number) => void) | null = null;
   onOverspeed: (() => void) | null = null;
@@ -143,11 +150,13 @@ export class Sim {
   private buildSchedule(): void {
     const DWELL = 30;
     let t = DWELL;
+    let wall = DWELL;
     this.schedule = [{ arr: 0, dep: DWELL }];
     for (let k = 1; k < this.stops.length; k++) {
       const stop = STATION_POS[this.stops[k]];
       const p: Phys = { s: STATION_POS[this.stops[k - 1]], kmh: 0, acc: 0 };
       let time = 0;
+      let legWall = 0;
       const dt = 0.1;
       while (time < 3600) {
         const lim = atcLimitAt(p.s, stop);
@@ -160,12 +169,20 @@ export class Sim {
         else cmd = 0;
         stepPhys(p, cmd, dt);
         time += dt;
+        legWall += p.kmh >= FF_MIN_KMH && d > FF_DIST ? dt / FF_SCALE : dt;
         if (p.kmh <= 0.01 && d < 5 && time > 5) break;
       }
       t += Math.round(time * 1.1 + 10);
+      wall += legWall * 1.1 + 10 + (k < this.stops.length - 1 ? DWELL : 0);
       this.schedule.push({ arr: t, dep: t + DWELL });
       t += DWELL;
     }
+    this.wallEstimate = Math.round(wall);
+  }
+
+  // いまの はやおくりの ばいりつ（1 か FF_SCALE）
+  fastForward(): number {
+    return this.phase === 'running' && this.p.kmh >= FF_MIN_KMH && this.distToStop() > FF_DIST ? FF_SCALE : 1;
   }
 
   setPower(n: number): void {

@@ -71,13 +71,19 @@ export default async function ({ page, shot, click, root }) {
   await press('ArrowUp', 8);
   await press('w', 5);
   let maxKmh = 0;
+  let ffSeen = false;
   for (let i = 0; i < 200; i++) {
     await page.waitForTimeout(250);
     const k = await page.evaluate(() => Number(document.getElementById('spdnum')?.textContent ?? 0));
     maxKmh = Math.max(maxKmh, k);
+    if (!ffSeen && (await page.locator('#ff.on').count())) {
+      ffSeen = true;
+      await shot('10b-fastforward');
+    }
     if (i === 40) await shot('10-normal-fast');
     if ((await guide()).includes('そろそろ')) break;
   }
-  console.log('max speed in normal run:', maxKmh);
+  console.log('max speed in normal run:', maxKmh, 'fast-forward seen:', ffSeen);
+  if (!ffSeen) throw new Error('はやおくりが でなかった');
   await shot('11-normal-brake-hint');
 }

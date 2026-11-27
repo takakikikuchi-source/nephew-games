@@ -10,6 +10,10 @@ import { BRAKE_MAX, POWER_MAX, Sim, brakeLabel, fmtClock, powerLabel, type Mode 
 import { World } from './world';
 import { TrainAudio, announceChime, atcBell, departMelody, doorCloseSound, doorOpenChime, horn, overspeedAlarm, whoosh } from './audio';
 
+// 1かいの うんてんは 15ふん いないで おわる（コースえらび・けっかを いれて）。うんてんは この じかんまで。
+const MAX_DRIVE_SEC = 13.5 * 60;
+const driveMin = (c: Course) => Math.max(1, Math.round(new Sim(c, 'normal').wallEstimate / 60));
+
 const css = document.createElement('style');
 css.textContent = PROFILE_CSS + COMMON_CSS;
 document.head.appendChild(css);
@@ -157,7 +161,7 @@ function renderCourses(): void {
         return `<button class="course" data-c="${c.id}">
           <span class="ttype" style="background:${t.color}">${t.name}</span>
           <span class="cname">${stName(c.from)} → ${stName(c.to)}</span>
-          <span class="cinfo">とまる えき ${courseStops(c).length - 1}こ ・ むずかしさ ${'🚄'.repeat(c.level)}</span>
+          <span class="cinfo">とまる えき ${courseStops(c).length - 1}こ ・ やく ${driveMin(c)}ぷん ・ むずかしさ ${'🚄'.repeat(c.level)}</span>
           ${c.note ? `<span class="cnote">${c.note}</span>` : ''}
           <span class="cbest">${best ? stars(best) : 'まだ はしっていない'}</span>
         </button>`;
@@ -187,7 +191,10 @@ async function customCourse(): Promise<void> {
   if (type === 'x') return;
   const stops = TRAIN_TYPES[type].stops;
   const from = await dialog('どこから しゅっぱつ する？', stops.slice(0, -1).map((i) => ({ label: stName(i), value: String(i) })));
-  const to = await dialog('どこまで いく？', stops.filter((i) => i > Number(from)).map((i) => ({ label: stName(i), value: String(i) })));
+  // 15ふんで おわる えきまで（とおすぎる えきは だせない）
+  const mk = (i: number): Course => ({ id: `custom-${type}-${from}-${i}`, type, from: Number(from), to: i, level: 2 });
+  const reach = stops.filter((i) => i > Number(from) && new Sim(mk(i), 'normal').wallEstimate <= MAX_DRIVE_SEC);
+  const to = await dialog('どこまで いく？<br><small>15ふんで いける えきまで だよ</small>', reach.map((i) => ({ label: `${stName(i)}（やく ${driveMin(mk(i))}ぷん）`, value: String(i) })));
   void startGame({ id: `custom-${type}-${from}-${to}`, type, from: Number(from), to: Number(to), level: 2 });
 }
 
@@ -288,6 +295,7 @@ async function startGame(c: Course): Promise<void> {
     <div class="cab"></div>
     <div class="hud-tl" id="tt"></div>
     <div class="guide" id="guide"></div>
+    <div class="ffbadge" id="ff">⏩ はやおくり</div>
     <div class="resultpop" id="pop"></div>
     <div class="board" id="board"></div>
     <button class="pausebtn" id="pause" aria-label="ちょっと やすむ">⏸</button>
@@ -635,7 +643,10 @@ function loop(): void {
   g.t += dt;
   pollGamepad();
   const sim = g.sim;
-  for (let i = 0; i < 4 * FAST; i++) sim.update(dt / 4);
+  // はやおくり（さいこうそくど ちかくで、つぎの えきが まだ とおい とき）
+  const ff = sim.fastForward();
+  for (let i = 0; i < 4 * FAST * ff; i++) sim.update(dt / 4);
+  document.getElementById('ff')?.classList.toggle('on', ff > 1);
   if (sim.phase === 'arrived' && sim.records.length > g.handled) {
     g.handled = sim.records.length;
     onArrive();
@@ -815,7 +826,7 @@ async function finishRun(): Promise<void> {
   const el = scr('s-result');
   el.innerHTML = rb(`
     <div class="page">
-      <h2>うんてん おつかれさま！</h2>
+      <h2>🚄 しゅうてんに ついたよ！ うんてん おしまい</h2>
       <div class="bigstars">${'⭐'.repeat(res.stars)}${'☆'.repeat(3 - res.stars)}</div>
       <div class="score">てんすう ${res.avg} てん</div>
       <div class="tablewrap"><table class="rtable"><tr><th>えき</th><th>とまった ところ</th>${mode !== 'easy' ? '<th>じかん</th><th>ATC</th><th>アナウンス</th>' : ''}<th>てん</th></tr>
