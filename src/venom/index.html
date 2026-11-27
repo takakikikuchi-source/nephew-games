@@ -225,6 +225,53 @@ rt{font-size:.5em}
 .btn.small{font-size:15px;padding:8px 12px}
 .card.zk{width:180px}
 .card.zk .pic{width:120px;height:120px}
+
+/* v4：すがた・やること・ボス */
+.lvrow{align-items:center}
+.stagebar{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:15px;font-weight:700;color:var(--sub)}
+.stagebar span{padding:2px 8px;border-radius:999px;background:#1b1535}
+.stagebar span.done{color:#8ce99a}
+.stagebar span.now{background:var(--accent);color:#1d1530}
+.stagebar b{color:#6b5fa0}
+.mtitle{font-size:16px;font-weight:700;color:var(--sub)}
+.missions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.mission{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:18px;font-weight:700;padding:8px 6px;border-radius:16px;border:3px solid transparent;background:#fff;color:#2b2150;box-shadow:0 5px 0 #b9add9;cursor:pointer}
+.mission .ic{font-size:30px}
+.mission .mx{font-size:16px;color:#e64980;letter-spacing:.1em;min-height:1em}
+.mission.next{border-color:var(--accent);animation:pulse 1.2s ease-in-out infinite}
+.mission.done{background:#2a2350;color:#8ce99a;box-shadow:none;cursor:default}
+.bossbtn{display:flex;align-items:center;gap:12px;text-align:left;font-size:17px;font-weight:700;padding:8px 14px;border-radius:18px;border:none;background:#3a2f6b;color:#fff;margin-top:auto}
+.bossbtn .bpic{width:64px;height:64px;flex:none}
+.bossbtn .bpic svg{width:100%;height:100%}
+.bossbtn.ready{background:linear-gradient(90deg,#ff6bd6,#f59f00);box-shadow:0 5px 0 #9c3a7d;cursor:pointer;animation:pulse 1.2s ease-in-out infinite}
+.bossbtn b{font-size:22px}
+.bossbtn:disabled{opacity:.7}
+.nextstage{margin-top:auto;text-align:center;font-size:16px;color:var(--sub);background:#1b1535;border-radius:14px;padding:10px}
+.kansei{width:100%;height:100%;position:relative;border-radius:50%;background:radial-gradient(circle,rgba(255,224,102,.55),rgba(255,224,102,0) 68%)}
+.kansei svg{width:100%;height:100%;filter:drop-shadow(0 0 10px #ffd43b) drop-shadow(0 6px 6px rgba(0,0,0,.3))}
+.card.zk.hall{border:3px solid #ffd43b}
+.done-page{text-align:center}
+.done-card{display:flex;align-items:center;gap:18px;background:var(--panel);border:3px solid #ffd43b;border-radius:24px;padding:14px 24px;font-size:18px}
+.done-card .kansei{width:180px;height:180px}
+/* じゃんけん */
+.habit{font-size:13px;font-weight:700;color:#ffe066;margin-top:2px}
+.cmd.hands{grid-template-columns:repeat(3,minmax(0,1fr));min-width:min(620px,56vw)}
+.cmd.hands .run{grid-column:1/-1;padding:6px;font-size:15px}
+.hand{display:flex;flex-direction:column;align-items:center;gap:1px;padding:6px 4px;border-radius:16px;border:none;background:#fff;color:#2b2150;box-shadow:0 5px 0 #b9add9;font-weight:700;cursor:pointer}
+.hand .hi{font-size:40px;line-height:1.1}
+.hand b{font-size:20px}
+.hand .hn{font-size:14px}
+.hand small{font-size:11px;color:#6b5fa0}
+.hand.h-gu{background:#fff0f0}.hand.h-choki{background:#f8f0fc}.hand.h-pa{background:#e7f5ff}
+.hand:hover{transform:translateY(-2px)}
+.jk{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%) scale(.6);opacity:0;pointer-events:none;transition:opacity .15s,transform .2s;background:rgba(20,14,40,.88);border-radius:24px;padding:12px 28px;text-align:center;color:#fff;z-index:5}
+.jk.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.jk-row{display:flex;align-items:center;gap:22px}
+.jk-h{font-size:84px;line-height:1}
+.jk-vs{font-size:26px;font-weight:900;color:#ffd43b}
+.jk-res{font-size:26px;font-weight:900;margin-top:4px}
+.jk-res.win{color:#8ce99a}.jk-res.lose{color:#ff8787}.jk-res.draw{color:#ffe066}
+.dmg.heal{color:#d3f9d8;-webkit-text-stroke:2px #2b8a3e}
 /* バトル（1たい1） */
 #s-battle .arena.duel{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;padding:14px 18px;gap:6px}
 .duel .side{display:flex;justify-content:center;min-height:0}

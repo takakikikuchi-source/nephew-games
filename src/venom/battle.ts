@@ -1,16 +1,21 @@
-// 1たい1 バトル。チーム（3びき まで）の 1ぴきずつが ばに でて、たおれたら つぎを だす。
-// じぶんの ばんに「こうたい」も できる（こうたいは こうげきより さきに おこる）。
-// ダメージは「こうげき × 50 ÷（50 ＋ ぼうぎょ）」の わりあい式（ぼうぎょを あげても むてきに ならない）。
-// はやさ：はやい ほうが さきに うごく。あいてより ずっと はやいと、こうげきを よけることが ある。
-// どくたいせい：どくの ききめ（じょうたい）と、どくわざの ダメージを へらす。
-import { BOSSES, PTYPES, SPECIES, type Boss, type PType } from './data';
-import { basicMove, naturalMove, resistFrac, stats, statsFor, type Creature, type Move } from './state';
+// じゃんけんバトル（1たい1）
+// まいターン、じぶんと あいてが どうじに 手（わざ）を えらぶ。じゃんけんに かった ほうが さきに わざを だし、
+// まけた ほうも たおれていなければ あとから わざを だす（はんげき）。あいこは はやさが はやい ほうが さき。
+// ✊グー＝はやい こうげき（ダメージ大）、✌️チョキ＝どく（ダメージ小＋どくの こうか）、
+// 🖐️パー＝まもり（その ターンの こうげきを 6わり へらして、へらした ぶんを はねかえす＋すこし かいふく）
+// ダメージは「こうげき × 50 ÷（50 ＋ ぼうぎょ）」の わりあい式。
+import { BOSSES, HANDS, HAND_IDS, PTYPES, SPECIES, favoriteHand, janken, type Hand, type PType } from './data';
+import { bossStats, movesFor, resistFrac, runStats, statsFor, type Move, type Run } from './state';
 
 const K = 50;
 const CRIT_RATE = 0.05;
+const WIN_CRIT_RATE = 0.3; // じゃんけんに かつと「いきおい」で きゅうしょに あたりやすい
+const WILD_SCALE = [0, 0.75, 0.85, 0.85]; // やせいの あいては すこし よわい（あかちゃんの うちは もっと よわい）
 const CRIT_MULT = 1.5;
 const DODGE_MAX = 0.2; // よける かくりつの さいだい
 const DODGE_SLOPE = 0.2; // はやさが あいての 2ばいで 20%
+const FAV_RATE = 0.6; // くせの 手を だす かくりつ
+const REFLECT = 1.0; // パーで へらした ダメージを そのまま はねかえす
 
 interface Status {
   para: boolean;
@@ -20,257 +25,248 @@ interface Status {
   atkDownTurns: number;
   defDown: number;
   defDownTurns: number;
-  defUp: number;
-  defUpTurns: number;
 }
 
 export type Side = 'p' | 'e';
 
-export interface Unit {
+export interface Fighter {
   side: Side;
-  idx: number;
   name: string;
   species: string | null;
+  bossIndex: number | null;
   level: number;
   maxHp: number;
   hp: number;
   atk: number;
   def: number;
   spd: number;
-  res: number; // どくたいせい
-  moves: Move[];
-  resist: Partial<Record<PType, number>>; // ボスの「この どくが ききにくい」
+  res: number;
+  moves: Record<Hand, Move>;
+  resist: Partial<Record<PType, number>>;
+  fav: Hand;
+  shield: number; // パーで つくった まもり（その ターンに うける ダメージを へらす）
   st: Status;
 }
 
 export type BattleEvent =
+  | { kind: 'janken'; me: Hand; foe: Hand; result: 'win' | 'lose' | 'draw'; first: Side }
   | { kind: 'text'; text: string }
-  | { kind: 'hit'; side: Side; idx: number; amount: number; hp: number; crit: boolean }
-  | { kind: 'dodge'; side: Side; idx: number }
-  | { kind: 'mark'; side: Side; idx: number }
-  | { kind: 'ko'; side: Side; idx: number }
-  | { kind: 'switch'; side: Side; idx: number }
+  | { kind: 'hit'; side: Side; amount: number; hp: number; crit: boolean }
+  | { kind: 'heal'; side: Side; amount: number; hp: number }
+  | { kind: 'dodge'; side: Side }
+  | { kind: 'mark'; side: Side }
+  | { kind: 'ko'; side: Side }
   | { kind: 'end'; win: boolean };
 
-export type Choice = { kind: 'move'; move: number } | { kind: 'switch'; to: number };
-
-const newStatus = (): Status => ({ para: false, bleedTurns: 0, bleedDmg: 0, atkDown: 0, atkDownTurns: 0, defDown: 0, defDownTurns: 0, defUp: 0, defUpTurns: 0 });
+const newStatus = (): Status => ({ para: false, bleedTurns: 0, bleedDmg: 0, atkDown: 0, atkDownTurns: 0, defDown: 0, defDownTurns: 0 });
 
 export function dodgeChance(attackerSpd: number, defenderSpd: number): number {
   if (attackerSpd <= 0) return DODGE_MAX;
   return Math.min(DODGE_MAX, Math.max(0, ((defenderSpd - attackerSpd) / attackerSpd) * DODGE_SLOPE));
 }
 
-export class Battle {
-  readonly players: Unit[];
-  readonly enemies: Unit[];
-  readonly boss: Boss | null;
-  active: Record<Side, number> = { p: 0, e: 0 };
+export function playerFighter(r: Run): Fighter {
+  const s = runStats(r);
+  return {
+    side: 'p',
+    name: SPECIES[r.species].name,
+    species: r.species,
+    bossIndex: null,
+    level: r.level,
+    maxHp: s.maxHp,
+    hp: Math.min(r.hp, s.maxHp),
+    atk: s.atk,
+    def: s.def,
+    spd: s.spd,
+    res: s.res,
+    moves: movesFor(r.species, r.stage),
+    resist: {},
+    fav: 'gu',
+    shield: 0,
+    st: newStatus(),
+  };
+}
+
+export function wildFighter(species: string, level: number, stage: number): Fighter {
+  const s = statsFor(species, level);
+  const sp = SPECIES[species];
+  const k = WILD_SCALE[Math.max(1, Math.min(3, stage))];
+  return {
+    side: 'e',
+    name: sp.name,
+    species,
+    bossIndex: null,
+    level,
+    maxHp: Math.round(s.maxHp * k),
+    hp: Math.round(s.maxHp * k),
+    atk: Math.round(s.atk * k),
+    def: s.def,
+    spd: s.spd,
+    res: s.res,
+    moves: movesFor(species, stage),
+    resist: {},
+    fav: favoriteHand(sp),
+    shield: 0,
+    st: newStatus(),
+  };
+}
+
+export function bossFighter(r: Run, bossIndex: number): Fighter {
+  const b = BOSSES[bossIndex];
+  const s = bossStats(r, bossIndex);
+  const mv = (h: Hand): Move => {
+    const m = b.moves[h];
+    return { hand: h, name: m.name, power: m.power, types: [], hits: m.hits, guard: h === 'pa' ? 0.6 : undefined, heal: h === 'pa' ? 0.06 : undefined };
+  };
+  return {
+    side: 'e',
+    name: b.name,
+    species: null,
+    bossIndex,
+    level: r.level + 2,
+    maxHp: s.maxHp,
+    hp: s.maxHp,
+    atk: s.atk,
+    def: s.def,
+    spd: s.spd,
+    res: s.res,
+    moves: { gu: mv('gu'), choki: mv('choki'), pa: mv('pa') },
+    resist: b.resist,
+    fav: b.fav,
+    shield: 0,
+    st: newStatus(),
+  };
+}
+
+export class Duel {
+  readonly me: Fighter;
+  readonly foe: Fighter;
   over = false;
   win = false;
+  turns = 0;
+  private jankenWinner: Fighter | null = null;
 
-  constructor(team: Creature[], wild: { species: string; level: number }[] | null, bossIndex: number | null) {
-    this.players = team.map((c, i) => {
-      const s = stats(c);
-      return {
-        side: 'p',
-        idx: i,
-        name: SPECIES[c.species].name,
-        species: c.species,
-        level: c.level,
-        maxHp: s.maxHp,
-        hp: Math.min(c.hp, s.maxHp),
-        atk: s.atk,
-        def: s.def,
-        spd: s.spd,
-        res: s.res,
-        moves: [...c.moves, basicMove()],
-        resist: {},
-        st: newStatus(),
-      };
-    });
-    this.active.p = Math.max(0, this.players.findIndex((u) => u.hp > 0));
-    this.boss = bossIndex != null ? BOSSES[bossIndex] : null;
-    if (this.boss) {
-      const b = this.boss;
-      this.enemies = [{ side: 'e', idx: 0, name: b.name, species: null, level: b.recLevel, maxHp: b.stats.hp, hp: b.stats.hp, atk: b.stats.atk, def: b.stats.def, spd: b.stats.spd, res: 0, moves: [], resist: b.resist, st: newStatus() }];
-    } else {
-      this.enemies = (wild ?? []).map((w, i) => {
-        const s = statsFor(w.species, w.level);
-        return {
-          side: 'e',
-          idx: i,
-          name: SPECIES[w.species].name,
-          species: w.species,
-          level: w.level,
-          maxHp: s.maxHp,
-          hp: s.maxHp,
-          atk: s.atk,
-          def: s.def,
-          spd: s.spd,
-          res: s.res,
-          moves: [naturalMove(w.species), basicMove()],
-          resist: {},
-          st: newStatus(),
-        };
-      });
-    }
+  constructor(me: Fighter, foe: Fighter) {
+    this.me = me;
+    this.foe = foe;
   }
 
-  me(): Unit {
-    return this.players[this.active.p];
+  // あいての 手：くせの 手が 60%、のこりは 20%ずつ
+  foeHand(): Hand {
+    if (Math.random() < FAV_RATE) return this.foe.fav;
+    const others = HAND_IDS.filter((h) => h !== this.foe.fav);
+    return others[Math.floor(Math.random() * others.length)];
   }
 
-  foe(): Unit {
-    return this.enemies[this.active.e];
+  private other(u: Fighter): Fighter {
+    return u === this.me ? this.foe : this.me;
   }
 
-  alive(side: Side): Unit[] {
-    return (side === 'p' ? this.players : this.enemies).filter((u) => u.hp > 0);
-  }
-
-  // ばに いる なかまが たおれて、つぎを えらぶ ひつようが あるか
-  needSendOut(): boolean {
-    return !this.over && this.me().hp <= 0 && this.alive('p').length > 0;
-  }
-
-  // こうたいできる なかま（ばに いない、げんきな こ）
-  benchAlive(): Unit[] {
-    return this.players.filter((u) => u.hp > 0 && u.idx !== this.active.p);
-  }
-
-  sendOut(idx: number): BattleEvent[] {
-    const ev: BattleEvent[] = [];
-    const u = this.players[idx];
-    if (!u || u.hp <= 0) return ev;
-    this.active.p = idx;
-    u.st = newStatus();
-    ev.push({ kind: 'switch', side: 'p', idx });
-    ev.push({ kind: 'text', text: `いけ！ ${u.name}！` });
-    return ev;
-  }
-
-  private damage(a: Unit, d: Unit, power: number, mult: number): { amount: number; crit: boolean } {
+  private damage(a: Fighter, d: Fighter, power: number, mult: number): { amount: number; crit: boolean } {
     const atk = a.atk * (1 - a.st.atkDown);
-    const def = d.def * (1 - d.st.defDown) * (1 + d.st.defUp);
-    const crit = Math.random() < CRIT_RATE;
+    const def = d.def * (1 - d.st.defDown);
+    const crit = Math.random() < (a === this.jankenWinner ? WIN_CRIT_RATE : CRIT_RATE);
     const rnd = 0.9 + Math.random() * 0.2;
     const raw = ((atk * power * K) / (K + def)) * mult * rnd * (crit ? CRIT_MULT : 1);
     return { amount: Math.max(1, Math.round(raw)), crit };
   }
 
-  private hit(target: Unit, amount: number, crit: boolean, ev: BattleEvent[]): void {
-    target.hp = Math.max(0, target.hp - amount);
-    ev.push({ kind: 'hit', side: target.side, idx: target.idx, amount, hp: target.hp, crit });
-    if (target.hp === 0) {
-      ev.push({ kind: 'ko', side: target.side, idx: target.idx });
-      ev.push({ kind: 'text', text: `${target.name}は たおれた！` });
+  private hit(t: Fighter, amount: number, crit: boolean, ev: BattleEvent[]): void {
+    t.hp = Math.max(0, t.hp - amount);
+    ev.push({ kind: 'hit', side: t.side, amount, hp: t.hp, crit });
+    if (t.hp === 0) {
+      ev.push({ kind: 'ko', side: t.side });
+      ev.push({ kind: 'text', text: `${t.name}は たおれた！` });
     }
   }
 
-  private dodged(a: Unit, t: Unit, ev: BattleEvent[]): boolean {
-    if (Math.random() >= dodgeChance(a.spd, t.spd)) return false;
-    ev.push({ kind: 'dodge', side: t.side, idx: t.idx });
-    ev.push({ kind: 'text', text: `${t.name}は すばやく よけた！` });
-    return true;
-  }
-
-  private useMove(a: Unit, m: Move, t: Unit, ev: BattleEvent[]): void {
-    ev.push({ kind: 'text', text: `${a.name}の ${m.name}！` });
-    if (this.dodged(a, t, ev)) return;
-    const cut = resistFrac(t.res); // どくたいせいで へる わりあい
-    const typeRes = m.types.length ? m.types.reduce((acc, ty) => acc + (t.resist[ty] ?? 1), 0) / m.types.length : 1;
-    const mult = m.types.length ? typeRes * (1 - cut / 2) : 1;
-    const { amount, crit } = this.damage(a, t, m.power, mult);
-    if (crit) ev.push({ kind: 'text', text: 'きゅうしょに あたった！' });
-    this.hit(t, amount, crit, ev);
-    if (m.types.length && typeRes < 0.6) ev.push({ kind: 'text', text: 'あまり きいていない みたい…' });
-    if (t.hp <= 0) return;
-    const counts = new Map<PType, number>();
-    for (const ty of m.types) counts.set(ty, (counts.get(ty) ?? 0) + 1);
-    for (const [ty, n] of counts) {
-      const r = (t.resist[ty] ?? 1) * (1 - cut);
-      const weak = r < 0.7;
-      if (ty === 'shibire') {
-        if (Math.random() < Math.min(0.6, 0.28 * n) * r) {
-          t.st.para = true;
-          ev.push({ kind: 'mark', side: t.side, idx: t.idx });
-          ev.push({ kind: 'text', text: `${t.name}は しびれて うごけなく なった！` });
-        } else if (weak) ev.push({ kind: 'text', text: `${t.name}には しびれどくが ききにくい！` });
-      } else if (ty === 'chi') {
-        t.st.bleedTurns = 3;
-        t.st.bleedDmg = Math.max(1, Math.round(t.maxHp * 0.045 * n * r));
-        ev.push({ kind: 'mark', side: t.side, idx: t.idx });
-        ev.push({ kind: 'text', text: `${t.name}の {血|ち}が とまらなく なった！` });
-      } else if (ty === 'itami') {
-        const amt = Math.min(0.5, 0.22 * n * r);
-        if (amt >= 0.1) {
-          t.st.atkDown = Math.max(t.st.atkDown, amt);
-          t.st.atkDownTurns = 3;
-          ev.push({ kind: 'mark', side: t.side, idx: t.idx });
-          ev.push({ kind: 'text', text: `いたみで ${t.name}の こうげきが さがった！` });
-        } else ev.push({ kind: 'text', text: `${t.name}には いたみどくが ききにくい！` });
-      } else if (ty === 'kowashi') {
-        t.st.defDown = Math.max(t.st.defDown, Math.min(0.6, 0.28 * n * r));
-        t.st.defDownTurns = 3;
-        ev.push({ kind: 'mark', side: t.side, idx: t.idx });
-        ev.push({ kind: 'text', text: `${t.name}の ぼうぎょが さがった！` });
-      }
-    }
-  }
-
-  private bossAct(b: Unit, ev: BattleEvent[]): void {
-    const boss = this.boss!;
-    const total = boss.moves.reduce((a, m) => a + m.weight, 0);
-    let r = Math.random() * total;
-    let mv = boss.moves[0];
-    for (const m of boss.moves) {
-      r -= m.weight;
-      if (r < 0) {
-        mv = m;
-        break;
-      }
-    }
-    if (mv.defUp && b.st.defUpTurns > 0) mv = boss.moves[0];
-    ev.push({ kind: 'text', text: `${b.name}の ${mv.name}！` });
-    if (mv.defUp) {
-      b.st.defUp = mv.defUp;
-      b.st.defUpTurns = 3;
-      ev.push({ kind: 'mark', side: b.side, idx: b.idx });
-      ev.push({ kind: 'text', text: `${b.name}の ぼうぎょが あがった！` });
-      return;
-    }
-    const t = this.me();
-    if (this.dodged(b, t, ev)) return;
-    for (let i = 0; i < (mv.hits ?? 1) && t.hp > 0; i++) {
-      const { amount, crit } = this.damage(b, t, mv.power, 1);
-      this.hit(t, amount, crit, ev);
-    }
-  }
-
-  private act(u: Unit, choice: Choice, ev: BattleEvent[]): void {
-    if (u.hp <= 0 || this.over) return;
-    const target = u.side === 'p' ? this.foe() : this.me();
-    if (target.hp <= 0) return;
+  private act(u: Fighter, h: Hand, ev: BattleEvent[]): void {
+    const t = this.other(u);
+    if (u.hp <= 0 || t.hp <= 0 || this.over) return;
     if (u.st.para) {
       u.st.para = false;
       ev.push({ kind: 'text', text: `${u.name}は しびれて うごけない！` });
       return;
     }
-    if (u.side === 'p') {
-      const m = choice.kind === 'move' ? u.moves[choice.move] ?? u.moves[0] : u.moves[0];
-      this.useMove(u, m, target, ev);
-    } else if (this.boss) {
-      this.bossAct(u, ev);
-    } else {
-      const m = Math.random() < 0.7 ? u.moves[0] : u.moves[1];
-      this.useMove(u, m, target, ev);
+    const m = u.moves[h];
+    ev.push({ kind: 'text', text: `${u.name}の ${HANDS[h].icon}${m.name}！` });
+    if (h === 'pa') {
+      u.shield = Math.max(u.shield, m.guard ?? 0.6);
+      const heal = Math.min(u.maxHp - u.hp, Math.round(u.maxHp * (m.heal ?? 0)));
+      ev.push({ kind: 'mark', side: u.side });
+      if (heal > 0) {
+        u.hp += heal;
+        ev.push({ kind: 'heal', side: u.side, amount: heal, hp: u.hp });
+      }
+      ev.push({ kind: 'text', text: `${u.name}は まもりを かためた！` });
+      return;
+    }
+    if (Math.random() < dodgeChance(u.spd, t.spd)) {
+      ev.push({ kind: 'dodge', side: t.side });
+      ev.push({ kind: 'text', text: `${t.name}は すばやく よけた！` });
+      return;
+    }
+    const cut = resistFrac(t.res); // どくたいせいで へる わりあい
+    const typeRes = m.types.length ? m.types.reduce((a, ty) => a + (t.resist[ty] ?? 1), 0) / m.types.length : 1;
+    const mult = m.types.length ? typeRes * (1 - cut / 2) : 1;
+    for (let i = 0; i < (m.hits ?? 1) && t.hp > 0; i++) {
+      let { amount, crit } = this.damage(u, t, m.power, mult);
+      let back = 0;
+      if (t.shield > 0) {
+        const blocked = Math.round(amount * t.shield);
+        amount = Math.max(1, amount - blocked);
+        back = Math.max(1, Math.round(blocked * REFLECT));
+        t.shield = 0;
+        ev.push({ kind: 'text', text: `${t.name}が うけとめた！` });
+      }
+      if (crit) ev.push({ kind: 'text', text: 'きゅうしょに あたった！' });
+      this.hit(t, amount, crit, ev);
+      if (back > 0 && u.hp > 0 && !this.over) {
+        ev.push({ kind: 'text', text: `はねかえした！` });
+        this.hit(u, back, false, ev);
+        if (u.hp <= 0) return;
+      }
+    }
+    if (h === 'choki' && t.hp > 0) this.poison(m, t, cut, ev);
+  }
+
+  private poison(m: Move, t: Fighter, cut: number, ev: BattleEvent[]): void {
+    for (const ty of new Set(m.types)) {
+      const r = (t.resist[ty] ?? 1) * (1 - cut);
+      if (ty === 'shibire') {
+        if (Math.random() < 0.45 * r) {
+          t.st.para = true;
+          ev.push({ kind: 'mark', side: t.side });
+          ev.push({ kind: 'text', text: `${t.name}は しびれて うごけなく なった！` });
+        } else if (r < 0.7) ev.push({ kind: 'text', text: `${t.name}には しびれどくが ききにくい！` });
+      } else if (ty === 'chi') {
+        t.st.bleedTurns = 3;
+        t.st.bleedDmg = Math.max(1, Math.round(t.maxHp * 0.06 * r));
+        ev.push({ kind: 'mark', side: t.side });
+        ev.push({ kind: 'text', text: `${t.name}の {血|ち}が とまらなく なった！` });
+      } else if (ty === 'itami') {
+        const amt = Math.min(0.5, 0.3 * r);
+        if (amt >= 0.1) {
+          t.st.atkDown = Math.max(t.st.atkDown, amt);
+          t.st.atkDownTurns = 3;
+          ev.push({ kind: 'mark', side: t.side });
+          ev.push({ kind: 'text', text: `いたみで ${t.name}の こうげきが さがった！` });
+        } else ev.push({ kind: 'text', text: `${t.name}には いたみどくが ききにくい！` });
+      } else if (ty === 'kowashi') {
+        t.st.defDown = Math.max(t.st.defDown, Math.min(0.6, 0.35 * r));
+        t.st.defDownTurns = 3;
+        ev.push({ kind: 'mark', side: t.side });
+        ev.push({ kind: 'text', text: `${t.name}の ぼうぎょが さがった！` });
+      }
     }
   }
 
   private endRound(ev: BattleEvent[]): void {
-    for (const u of [this.me(), this.foe()]) {
-      if (u.hp <= 0) continue;
+    // パーの まもりは その ターンだけ（まけて あとから だすと まにあわない）
+    this.me.shield = 0;
+    this.foe.shield = 0;
+    for (const u of [this.me, this.foe]) {
+      if (u.hp <= 0 || this.over) continue;
       const st = u.st;
       if (st.bleedTurns > 0) {
         ev.push({ kind: 'text', text: `どくで ${u.name}に ダメージ！` });
@@ -279,71 +275,45 @@ export class Battle {
       }
       if (st.atkDownTurns > 0 && --st.atkDownTurns === 0) st.atkDown = 0;
       if (st.defDownTurns > 0 && --st.defDownTurns === 0) st.defDown = 0;
-      if (st.defUpTurns > 0 && --st.defUpTurns === 0) st.defUp = 0;
-      if (this.checkEnd(ev)) return;
+      this.checkEnd(ev);
     }
   }
 
-  turn(choice: Choice): BattleEvent[] {
+  turn(myHand: Hand, foeHand: Hand = this.foeHand()): BattleEvent[] {
     const ev: BattleEvent[] = [];
-    if (this.over || this.me().hp <= 0) return ev;
-    if (choice.kind === 'switch') {
-      const before = this.me();
-      if (choice.to !== before.idx && this.players[choice.to]?.hp > 0) {
-        ev.push({ kind: 'text', text: `${before.name}、もどって！` });
-        before.st = newStatus(); // ひっこむと じょうたいが なおる
-        ev.push(...this.sendOut(choice.to));
-      }
-      this.act(this.foe(), choice, ev);
-    } else {
-      const me = this.me();
-      const foe = this.foe();
-      const order = me.spd === foe.spd ? (Math.random() < 0.5 ? [me, foe] : [foe, me]) : me.spd > foe.spd ? [me, foe] : [foe, me];
-      for (const u of order) {
-        this.act(u, choice, ev);
-        if (this.checkEnd(ev)) return ev;
-      }
+    if (this.over) return ev;
+    this.turns++;
+    const result = janken(myHand, foeHand);
+    this.jankenWinner = result === 'win' ? this.me : result === 'lose' ? this.foe : null;
+    const meFirst = result === 'win' || (result === 'draw' && (this.me.spd > this.foe.spd || (this.me.spd === this.foe.spd && Math.random() < 0.5)));
+    ev.push({ kind: 'janken', me: myHand, foe: foeHand, result, first: meFirst ? 'p' : 'e' });
+    const order: [Fighter, Hand][] = meFirst ? [[this.me, myHand], [this.foe, foeHand]] : [[this.foe, foeHand], [this.me, myHand]];
+    for (const [u, h] of order) {
+      this.act(u, h, ev);
+      if (this.checkEnd(ev)) return ev;
     }
-    if (this.checkEnd(ev)) return ev;
     this.endRound(ev);
-    this.checkEnd(ev);
-    // あいてが たおれて、まだ のこっていれば つぎが でてくる
-    if (!this.over && this.foe().hp <= 0) {
-      const next = this.enemies.findIndex((u) => u.hp > 0);
-      if (next >= 0) {
-        this.active.e = next;
-        ev.push({ kind: 'switch', side: 'e', idx: next });
-        ev.push({ kind: 'text', text: `${this.enemies[next].name}が でてきた！` });
-      }
-    }
     return ev;
   }
 
   private checkEnd(ev: BattleEvent[]): boolean {
     if (this.over) return true;
-    if (this.alive('e').length === 0) {
+    if (this.foe.hp <= 0 || this.me.hp <= 0) {
       this.over = true;
-      this.win = true;
-      ev.push({ kind: 'text', text: this.boss ? `${this.boss.name}を たおした！` : 'かった！' });
-      ev.push({ kind: 'end', win: true });
-      return true;
-    }
-    if (this.alive('p').length === 0) {
-      this.over = true;
-      ev.push({ kind: 'text', text: 'みんな つかれて たおれて しまった…' });
-      ev.push({ kind: 'end', win: false });
+      this.win = this.foe.hp <= 0;
+      ev.push({ kind: 'end', win: this.win });
       return true;
     }
     return false;
   }
 }
 
-export const markLabels = (u: Unit): [string, string][] => {
+export const markLabels = (u: Fighter): [string, string][] => {
   const m: [string, string][] = [];
+  if (u.shield > 0) m.push(['🖐️まもり', HANDS.pa.color]);
   if (u.st.para) m.push(['⚡しびれ', PTYPES.shibire.color]);
   if (u.st.bleedTurns > 0) m.push(['🩸', PTYPES.chi.color]);
   if (u.st.atkDown > 0) m.push(['💥↓', PTYPES.itami.color]);
   if (u.st.defDown > 0) m.push(['🧪↓', PTYPES.kowashi.color]);
-  if (u.st.defUp > 0) m.push(['🛡️↑', '#868e96']);
   return m;
 };

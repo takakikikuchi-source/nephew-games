@@ -1,8 +1,10 @@
-// ベノムモンスター の自動プレイ（smoke.mjs から呼ばれる）
+// ベノムモンスター（v4）の自動プレイ（smoke.mjs から呼ばれる）
+// たまご → ごはん → トレーニング → じゃんけんバトルで せいちょう → ボス → 完成体 → おしまい → でんどう → もう1かい → ふるい セーブの いこう
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export default async function ({ page, shot, click, root }) {
+  const dlg = page.locator('.dlg-back');
   const dlgOk = async () => {
     for (let i = 0; i < 15; i++) {
       const b = page.locator('.dlg-back .btn.primary, .dlg-back .btn').first();
@@ -16,11 +18,16 @@ export default async function ({ page, shot, click, root }) {
     return false;
   };
   const clearDialogs = async () => {
-    while (await page.locator('.dlg-back').count()) {
+    while (await dlg.count()) {
       await dlgOk();
       await page.waitForTimeout(200);
     }
   };
+  const save = () =>
+    page.evaluate(() => {
+      const k = Object.keys(localStorage).find((x) => x.startsWith('ng.venom.') && !x.endsWith('.bak'));
+      return JSON.parse(localStorage.getItem(k));
+    });
   const editSave = async (fn) => {
     await page.evaluate((src) => {
       const k = Object.keys(localStorage).find((x) => x.startsWith('ng.venom.') && !x.endsWith('.bak'));
@@ -33,6 +40,29 @@ export default async function ({ page, shot, click, root }) {
     await page.reload();
     await click('#start');
     await click('.pp-pick[data-id]');
+    await page.waitForTimeout(300);
+    await clearDialogs();
+  };
+  // バトルを さいごまで（手は じゅんばんに）
+  const fight = async (label) => {
+    let shotJk = false;
+    for (let t = 0; t < 200; t++) {
+      if (await dlg.count()) break;
+      const h = page.locator('#cmd [data-hand]');
+      if (await h.count()) {
+        await h.nth(t % 3).click();
+        if (!shotJk) {
+          await page.waitForTimeout(350);
+          await shot(`${label}-janken`);
+          shotJk = true;
+        }
+      }
+      await page.waitForTimeout(300);
+    }
+    await shot(`${label}-end`);
+    const won = (await dlg.innerText()).includes('かった') || (await dlg.innerText()).includes('かんせいたい');
+    await clearDialogs();
+    return won;
   };
 
   await page.goto(pathToFileURL(path.join(root, 'play', 'venom.html')).href);
@@ -44,100 +74,106 @@ export default async function ({ page, shot, click, root }) {
   await page.fill('#pp-input', 'テスト');
   await click('.pp-ok');
   await dlgOk(); // ようこそ
-  await click('#pull');
-  await page.waitForTimeout(3600);
   await shot('02-gacha');
-  await dlgOk();
-  await shot('03-home-egg');
-  await click('[data-act="sleep"]');
-  await dlgOk();
-  await page.waitForTimeout(1700);
-  await shot('04-hatch');
-  await dlgOk();
-  await shot('05-home-baby');
-  // ごはん
-  await click('[data-act="feed"]');
-  await shot('06-feed');
-  await click('[data-food]');
-  await page.waitForTimeout(500);
+  await click('#pull');
+  await page.waitForTimeout(3800);
+  await shot('03-hatch');
   await clearDialogs();
+  await shot('04-home');
+
+  // ごはん（まちがえたら もういちど）
+  for (let i = 0; i < 8 && !(await save()).run.fed; i++) {
+    await click('[data-act="feed"]');
+    if (i === 0) await shot('05-feed');
+    await click('[data-food]');
+    await page.waitForTimeout(500);
+    await clearDialogs();
+  }
+  if (!(await save()).run.fed) throw new Error('ごはんが たべられなかった');
   // トレーニング
   await click('[data-act="train"]');
-  await shot('06b-train-pick');
-  await click('[data-stat="res"]');
+  await shot('06-train-pick');
+  await click('[data-stat="spd"]');
   for (let i = 0; i < 3; i++) {
     await page.waitForTimeout(400);
     await click('#tstop');
     await page.waitForTimeout(800);
   }
   await page.waitForTimeout(1800);
-  // やせいバトル
-  await click('[data-act="battle"]');
-  await shot('07-battle-select');
-  await click('[data-area="0"]');
-  await page.waitForTimeout(1200);
-  await shot('08-battle');
-  for (let t = 0; t < 80; t++) {
-    if (await page.locator('.dlg-back').count()) break;
-    const mv = page.locator('#cmd [data-mv]').first();
-    if (await mv.count()) await mv.click();
-    await page.waitForTimeout(400);
+  // やせいバトル（2かい かつと こどもに なる）
+  let wins = 0;
+  for (let i = 0; i < 8 && (await save()).run.stage === 1; i++) {
+    await click('[data-act="battle"]');
+    await page.waitForTimeout(1200);
+    if (i === 0) await shot('07-battle');
+    if (await fight(i === 0 ? '08' : `08-${i}`)) wins++;
+    await clearDialogs();
   }
-  await shot('09-battle-end');
-  await clearDialogs();
+  const s1 = await save();
+  if (s1.run.stage !== 2) throw new Error(`こどもに ならなかった（stage=${s1.run.stage}, wins=${wins}）`);
+  await shot('09-home-child');
 
-  // 3びきの チームを Lv20 にして、ホーム・バトル・図鑑を見る
+  // おとなの さいごまで すすめて ボスへ
   await editSave((s) => {
-    const ids = ['cobra', 'hyoumon', 'kamonohashi'];
-    const mk = (id, i) => ({ uid: 'u' + i, species: id, hatched: true, level: 20, exp: 10, hp: 999, bonus: { hp: 8, atk: 9, def: 6 }, mealsToday: 1, trainsToday: 2, moves: [{ id: 'n' + i, name: 'わざ', types: ['shibire'], power: 1.1 }] });
-    s.creatures = ids.map(mk);
-    s.team = ['u0', 'u1', 'u2'];
-    s.focus = 'u0';
-    s.owned = ['seaka', 'suzumebachi', 'mamushi', 'yamakagashi', 'tobizu', 'kabaki', 'mitsubachi', 'iraga', 'imori', 'hikigaeru', 'shidoni', 'sasori', 'deathstalker', 'garagara', 'gila', 'taipan', 'minokasago', 'akaei', 'torafugu', 'hyoumon', 'onidaruma', 'katsuo', 'anboina', 'erabu', 'kamonohashi', 'yadoku', 'habu', 'cobra', 'mamba', 'loris'];
-    s.factsSeen = Object.fromEntries(s.owned.map((id) => [id, 3]));
-    s.coins = 500;
-    s.essence = 3;
+    s.run.stage = 3;
+    s.run.level = 15;
+    s.run.fed = true;
+    s.run.trained = true;
+    s.run.wins = 2;
+    s.run.bonus = { hp: 8, atk: 9, def: 6, spd: 3, res: 6 };
+    s.run.hp = 999;
   });
   await reopen();
-  await page.evaluate(() => {
-    const k = Object.keys(localStorage).find((x) => x.startsWith('ng.venom.') && !x.endsWith('.bak'));
-    const s = JSON.parse(localStorage.getItem(k));
-    for (const c of s.creatures) c.hp = 120;
-    localStorage.setItem(k, JSON.stringify(s));
-  });
-  await reopen();
-  await shot('10-home-team');
-  await click('[data-act="battle"]');
-  await click('[data-boss="0"]');
-  await page.waitForTimeout(1200);
-  await shot('11-boss');
-  let swapped = false;
-  for (let t = 0; t < 200; t++) {
-    if (await page.locator('.dlg-back').count()) break;
-    const pick = page.locator('#cmd [data-to]').first();
-    const swap = page.locator('#cmd [data-swap]:not([disabled])');
-    const mv = page.locator('#cmd [data-mv]').first();
-    if (await pick.count()) {
-      await shot('11b-switch');
-      await pick.click();
-    } else if (!swapped && (await swap.count())) {
-      swapped = true;
-      await swap.click();
-    } else if (await mv.count()) await mv.click();
-    await page.waitForTimeout(350);
+  await shot('10-home-boss-ready');
+  for (let i = 0; i < 8 && (await save()).run; i++) {
+    await click('#boss');
+    await page.waitForTimeout(1200);
+    if (i === 0) await shot('11-boss');
+    await fight(i === 0 ? '12-boss' : `12-boss-${i}`);
+    await page.waitForTimeout(300);
+    await clearDialogs();
   }
-  if (!swapped) throw new Error('こうたい ボタンが でなかった');
-  await shot('12-boss-end');
-  await clearDialogs();
+  const s2 = await save();
+  if (s2.run || s2.hall.length !== 1) throw new Error('かんせいたいに ならなかった');
+  await shot('13-done');
+  // でんどう
+  await click('#toHall');
+  await shot('14-hall');
   await click('[data-back="home"]');
+  // おうちの ひとの「もう1かい」
+  await click('[data-go="settings"]');
+  await click('#extra');
+  const q = await dlg.innerText();
+  const m = q.match(/(\d+)\s*×\s*(\d+)/);
+  await page.fill('#pc-ans', String(Number(m[1]) * Number(m[2])));
+  await click('.dlg-back [data-ok]');
+  await page.waitForTimeout(500);
+  await shot('15-extra-gacha');
+  if (!(await page.locator('#pull').count())) throw new Error('もう1かいで ガチャに もどらなかった');
+
+  // ふるい セーブ（v3：チーム）からの いこう
+  await editSave((s) => {
+    for (const k of Object.keys(s)) delete s[k];
+    Object.assign(s, {
+      v: 3,
+      day: 5,
+      coins: 300,
+      creatures: [
+        { uid: 'a', species: 'cobra', hatched: true, level: 22, exp: 0, hp: 50, bonus: { hp: 1, atk: 1, def: 1, spd: 0, res: 0 }, moves: [] },
+        { uid: 'b', species: 'sasori', hatched: true, level: 8, exp: 0, hp: 50, bonus: { hp: 1, atk: 1, def: 1, spd: 0, res: 0 }, moves: [] },
+      ],
+      team: ['a', 'b'],
+      owned: ['cobra', 'sasori'],
+      met: [],
+      factsSeen: { cobra: 3, sasori: 1 },
+      bossBeaten: ['hebikui'],
+      cards: [],
+    });
+  });
+  await reopen();
+  const s3 = await save();
+  if (s3.v !== 4 || s3.hall.length !== 1 || s3.hall[0].species !== 'cobra') throw new Error('v3 → v4 の いこうが おかしい: ' + JSON.stringify(s3).slice(0, 200));
+  await shot('16-migrated');
   await click('[data-go="zukan"]');
-  await shot('13-zukan');
-  await page.mouse.wheel(0, 900);
-  await page.waitForTimeout(300);
-  await shot('14-zukan-2');
-  await page.mouse.wheel(0, 900);
-  await page.waitForTimeout(300);
-  await shot('15-zukan-3');
-  await click('[data-sp="kamonohashi"]');
-  await shot('16-zukan-detail');
+  await shot('17-zukan');
 }

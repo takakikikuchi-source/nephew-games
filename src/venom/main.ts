@@ -1,4 +1,4 @@
-// ベノムモンスター：画面と操作（v2：レベル・チームバトル・強さ3つ）
+// ベノムモンスター：画面と操作（v4：たまご 1こを 15ふんで 完成体まで そだてる・じゃんけんバトル）
 import { PROFILE_CSS, renderProfilePicker, type Profile } from '../common/profiles';
 import { COMMON_CSS, dialog, sleep as wait, toast } from '../common/ui';
 import { esc, rb } from '../common/text';
@@ -8,6 +8,8 @@ import {
   AREAS,
   BOSSES,
   FOODS,
+  HANDS,
+  HAND_IDS,
   MED_CARDS,
   PTYPES,
   PTYPE_IDS,
@@ -18,12 +20,12 @@ import {
   STAT_KEYS,
   type FoodId,
   type Habitat,
-  type PType,
+  type Hand,
   type StatKey,
 } from './data';
 import { bossSvg, creatureSvg, eggSvg } from './art';
 import * as G from './state';
-import { Battle, markLabels, type BattleEvent, type Choice, type Side, type Unit } from './battle';
+import { Duel, bossFighter, markLabels, playerFighter, wildFighter, type BattleEvent, type Fighter, type Side } from './battle';
 
 const css = document.createElement('style');
 css.textContent = PROFILE_CSS + COMMON_CSS;
@@ -57,8 +59,7 @@ const DECOS: Record<Habitat | 'egg', [string, number, number][]> = {
 
 let profile: Profile;
 let s: G.VenomSave;
-let labSlots: PType[] = [];
-let zTab: 'ikimono' | 'doku' | 'boss' | 'kusuri' = 'ikimono';
+let zTab: 'ikimono' | 'hall' | 'doku' | 'boss' | 'kusuri' = 'ikimono';
 let blacklight = false;
 
 const persist = () => G.saveGame(profile.id, s);
@@ -74,20 +75,19 @@ function modal(inner: string): { el: HTMLElement; close: () => void } {
   return { el: back, close: () => back.remove() };
 }
 
-const spName = (c: G.Creature) => (c.hatched ? SPECIES[c.species].name : '？？？の たまご');
-const artOf = (c: G.Creature, flip = false) => (c.hatched ? creatureSvg(c.species, G.stageOf(c), flip) : eggSvg(SPECIES[c.species].rarity));
+// 完成体の 絵（おとなの 絵に きんいろの ひかり）
+const kanseiArt = (id: string, flip = false) => `<div class="kansei">${creatureSvg(id, 3, flip)}</div>`;
+const handLabel = (h: Hand) => `${HANDS[h].icon}${HANDS[h].name}`;
 
 function topbar(back?: string): string {
   return `<header class="topbar">
     <div class="who">${profile.icon} ${esc(profile.name)}</div>
-    <div class="chip">📅 ${s.day}{日|にち}め</div>
-    <div class="chip coin">🪙 ${s.coins}</div>
-    <div class="chip">💧 エキス ${s.essence}</div>
+    <div class="chip">👑 でんどう ${new Set(s.hall.map((h) => h.species)).size} / ${SPECIES_IDS.length}</div>
     <div class="spacer"></div>
     ${
       back
         ? `<button class="tb" data-back="${back}">◀ もどる</button>`
-        : `<button class="tb" data-go="nakama">🐾 なかま</button><button class="tb" data-go="zukan">📖 ずかん</button><button class="tb" data-go="settings">⚙️ せってい</button>`
+        : `<button class="tb" data-go="zukan">📖 ずかん</button><button class="tb" data-go="settings">⚙️ せってい</button>`
     }
   </header>`;
 }
@@ -97,15 +97,7 @@ function bindTop(el: HTMLElement): void {
 }
 function go(where: string): void {
   sfx('click');
-  const map: Record<string, () => void> = {
-    home: renderHome,
-    nakama: renderNakama,
-    zukan: renderZukan,
-    settings: renderSettings,
-    gacha: renderGacha,
-    lab: renderLab,
-    battle: renderBattleSelect,
-  };
+  const map: Record<string, () => void> = { home: renderHome, zukan: renderZukan, settings: renderSettings };
   map[where]?.();
 }
 
@@ -141,12 +133,16 @@ function renderProfile(): void {
         return;
       }
       s = r.save;
-      if (s.creatures.length === 0) {
-        await dialog(`<b>ようこそ ベノムラボへ！</b><br>ここでは ほんものの どく{生|い}き{物|もの}を、たまごから そだてるよ。<br>まずは むりょうで たまごを 1こ ひいてみよう！`, [
-          { label: 'ガチャへ いく', value: 'ok', primary: true },
-        ]);
-        renderGacha();
-      } else renderHome();
+      persist();
+      if (!s.run && !G.doneToday(s) && s.gachaCount === 0 && s.hall.length === 0) {
+        await dialog(
+          `<b>ようこそ ベノムラボへ！</b><br>ほんものの どく{生|い}き{物|もの}を、たまごから「かんせいたい」まで そだてよう。<br>
+          あかちゃん → こども → おとなで、それぞれ ごはん・トレーニング・バトル 2かい。さいごに ボスに かつと かんせいたいだ！<br>
+          <small>1ぴき そだてたら、その日は おしまい。また あした あそぼう。</small>`,
+          [{ label: 'たまごを ひきに いく', value: 'ok', primary: true }],
+        );
+      }
+      renderHome();
     },
     () => sfx('click'),
   );
@@ -154,23 +150,14 @@ function renderProfile(): void {
 }
 
 // ======================= ホーム =======================
-function bubbleText(c: G.Creature): string {
-  if (!c.hatched) return 'ねると たまごが かえるよ';
-  const st = G.stats(c);
-  if (c.hp <= 0) return 'つかれて ねむっている… 💤';
-  if (c.hp < st.maxHp / 3) return 'HPが すくない… ねて かいふくしよう';
-  if (c.mealsToday < G.MAX_MEALS) return 'おなか すいた！ 🍽️';
-  return ['バトルに いこう！ ⚔️', 'もっと つよく なりたい！', 'きょうも がんばる！'][s.day % 3];
-}
-
-function statCard(k: StatKey, c: G.Creature): string {
-  const st = G.stats(c);
+function statCard(k: StatKey, r: G.Run): string {
+  const st = G.runStats(r);
   const info = STAT_INFO[k];
-  const bonus = c.bonus[k] * (k === 'hp' ? G.HP_PER_POINT : 1);
+  const bonus = r.bonus[k] * (k === 'hp' ? G.HP_PER_POINT : 1);
   if (k === 'hp') {
-    const pct = Math.max(0, Math.min(100, (c.hp / st.maxHp) * 100));
+    const pct = Math.max(0, Math.min(100, (r.hp / st.maxHp) * 100));
     return `<div class="scard" style="--sc:${info.color}"><div class="sname">${info.icon} ${info.name}</div>
-      <div class="sval">${c.hp}<small> / ${st.maxHp}</small></div>
+      <div class="sval">${r.hp}<small> / ${st.maxHp}</small></div>
       <div class="sbar"><div style="width:${pct}%;background:${pct < 34 ? '#ff6b6b' : '#51cf66'}"></div></div>
       <div class="sbonus">そだてて +${bonus}</div></div>`;
   }
@@ -183,70 +170,56 @@ function statCard(k: StatKey, c: G.Creature): string {
     <div class="sbonus">${note}そだてて +${bonus}</div></div>`;
 }
 
-const dots = (n: number, max: number) => '●'.repeat(Math.min(n, max)) + '○'.repeat(Math.max(0, max - n));
+function stageBar(r: G.Run): string {
+  const steps = ['あかちゃん', 'こども', 'おとな', '👑 かんせいたい'];
+  return `<div class="stagebar">${steps
+    .map((n, i) => `<span class="${i + 1 < r.stage ? 'done' : i + 1 === r.stage ? 'now' : ''}">${n}</span>`)
+    .join('<b>›</b>')}</div>`;
+}
+
+function bubbleText(r: G.Run): string {
+  return { feed: 'おなか すいた！ 🍽️', train: 'きたえて つよく なりたい！ 🏋️', battle: 'バトルに いこう！ ⚔️', boss: 'ボスに ちょうせんだ！ 👑' }[G.nextTask(r)];
+}
 
 function renderHome(): void {
-  const c = G.focused(s);
-  if (!c) return renderGacha();
   bgm.play(HOME_SONG);
-  const sp = SPECIES[c.species];
-  const hab = c.hatched ? sp.habitat : 'egg';
-  const st = G.stageOf(c);
-  const team = G.teamMembers(s);
-  const A = (act: string, ic: string, label: string, cls = '', dis = false) =>
-    `<button class="act ${cls}" data-act="${act}" ${dis ? 'disabled' : ''}><span class="ic">${ic}</span>${rb(label)}</button>`;
-  const lvBox = c.hatched
-    ? c.level >= G.MAX_LEVEL
-      ? `<div class="lvrow"><span class="lv">Lv ${c.level}</span><span>さいこう レベル！</span></div>`
-      : `<div class="lvrow"><span class="lv">Lv ${c.level}</span><span>つぎの レベルまで あと <b>${G.expToNext(c.level) - c.exp}</b></span></div>
-         <div class="xpbar"><div style="width:${(c.exp / G.expToNext(c.level)) * 100}%"></div></div>`
-    : '<div class="lvrow"><span class="lv">たまご</span><span>ねると かえるよ</span></div>';
+  if (!s.run) return G.doneToday(s) ? renderDone() : renderGacha();
+  const r = s.run;
+  const sp = SPECIES[r.species];
+  const next = G.nextTask(r);
+  const boss = BOSSES[G.bossFor(s)];
+  const M = (act: G.Task, ic: string, label: string, done: boolean, extra = '') =>
+    `<button class="mission ${done ? 'done' : ''} ${next === act ? 'next' : ''}" data-act="${act}" ${done ? 'disabled' : ''}>
+      <span class="ic">${done ? '✅' : ic}</span><span class="ml">${rb(label)}</span><span class="mx">${extra}</span></button>`;
   const el = scr('s-home');
   el.innerHTML = rb(`${topbar()}
   <main class="home-main">
-    <div class="habitat hab-${hab} ${blacklight && sp.glow && c.hatched ? 'blacklight' : ''}" id="habitat">
-      ${DECOS[hab].map(([e, x, y]) => `<span class="deco" style="left:${x}%;top:${y}%">${e}</span>`).join('')}
-      <div class="bubble">${bubbleText(c)}</div>
-      <div class="creature s${st} ${c.hatched ? '' : 'egg'} ${c.hatched && c.hp <= 0 ? 'tired' : ''}" id="creature"><div class="bob">${artOf(c)}</div></div>
-      ${sp.glow && c.hatched ? `<button class="blb" id="blb">🔦 ブラックライト ${blacklight ? 'OFF' : 'ON'}</button>` : ''}
-      <div class="name-tag">${spName(c)}${c.hatched ? `（${sp.stageNames[st - 1]}）` : ''}</div>
+    <div class="habitat hab-${sp.habitat} ${blacklight && sp.glow ? 'blacklight' : ''}" id="habitat">
+      ${DECOS[sp.habitat].map(([e, x, y]) => `<span class="deco" style="left:${x}%;top:${y}%">${e}</span>`).join('')}
+      <div class="bubble">${bubbleText(r)}</div>
+      <div class="creature s${r.stage}" id="creature"><div class="bob">${creatureSvg(r.species, r.stage)}</div></div>
+      ${sp.glow ? `<button class="blb" id="blb">🔦 ブラックライト ${blacklight ? 'OFF' : 'ON'}</button>` : ''}
+      <div class="name-tag">${sp.name}（${sp.stageNames[r.stage - 1]}）</div>
     </div>
     <aside class="panel">
-      ${lvBox}
-      ${c.hatched ? `<div class="scards">${STAT_KEYS.map((k) => statCard(k, c)).join('')}</div>` : ''}
-      ${c.hatched ? `<div class="today">きょうの ごはん <b>${dots(c.mealsToday, G.MAX_MEALS)}</b>　トレーニング <b>${dots(c.trainsToday, G.MAX_TRAINS)}</b></div>` : ''}
-      <div class="teamrow">${[0, 1, 2]
-        .map((i) => {
-          const m = team[i];
-          if (!m) return `<button class="tslot empty" data-go="nakama">＋<span>なかまから えらぶ</span></button>`;
-          const ms = G.stats(m);
-          return `<button class="tslot ${m.uid === c.uid ? 'on' : ''}" data-focus="${m.uid}"><span class="tpic">${artOf(m)}</span>
-            <span class="tname">${m.hatched ? `Lv${m.level}` : 'たまご'}</span>
-            ${m.hatched ? `<span class="thp"><span style="width:${(m.hp / ms.maxHp) * 100}%"></span></span>` : ''}</button>`;
-        })
-        .join('')}</div>
-      <div class="actions">
-        ${A('feed', '🍽️', 'ごはん', '', !c.hatched || c.mealsToday >= G.MAX_MEALS)}
-        ${A('train', '🏋️', 'トレーニング', '', !c.hatched || c.trainsToday >= G.MAX_TRAINS)}
-        ${A('battle', '⚔️', 'バトル', 'battle')}
-        ${A('sleep', '🌙', 'ねる', 'sleep')}
-        ${A('lab', '🧪', 'どくラボ', 'lab')}
-        ${A('gacha', '🥚', 'ガチャ', 'gacha')}
-        ${s.essence > 0 && c.hatched && c.level < G.MAX_LEVEL ? A('essence', '💧', `エキスを のませる（けいけんち +${G.ESSENCE_EXP}）`, 'wide') : ''}
+      <div class="lvrow"><span class="lv">Lv ${r.level}</span>${stageBar(r)}</div>
+      <div class="scards">${STAT_KEYS.map((k) => statCard(k, r)).join('')}</div>
+      <div class="mtitle">${G.STAGE_NAMES[r.stage]}の あいだに やること</div>
+      <div class="missions">
+        ${M('feed', '🍽️', 'ごはん', r.fed)}
+        ${M('train', '🏋️', 'トレーニング', r.trained)}
+        ${M('battle', '⚔️', 'やせいバトル', r.wins >= G.WINS_PER_STAGE, `${'●'.repeat(r.wins)}${'○'.repeat(G.WINS_PER_STAGE - r.wins)}`)}
       </div>
+      ${
+        r.stage === 3
+          ? `<button class="bossbtn ${next === 'boss' ? 'ready' : ''}" id="boss" ${next === 'boss' ? '' : 'disabled'}>
+              <span class="bpic">${bossSvg(boss.id)}</span><span>👑 ボス「${boss.name}」に かつと かんせいたい！${next === 'boss' ? '<br><b>ちょうせん する！</b>' : '<br><small>やることを ぜんぶ おわらせよう</small>'}</span></button>`
+          : `<div class="nextstage">ぜんぶ おわると「${G.STAGE_NAMES[r.stage + 1]}」に なるよ</div>`
+      }
     </aside>
   </main>`);
   bindTop(el);
-  el.querySelector<HTMLElement>('#creature')!.onclick = (e) => void doPet(c, e);
-  el.querySelectorAll<HTMLButtonElement>('[data-focus]').forEach((b) => {
-    b.onclick = () => {
-      s.focus = b.dataset.focus!;
-      blacklight = false;
-      persist();
-      sfx('click');
-      renderHome();
-    };
-  });
+  el.querySelector<HTMLElement>('#creature')!.onclick = (e) => void doPet(e);
   const blb = el.querySelector<HTMLButtonElement>('#blb');
   if (blb)
     blb.onclick = () => {
@@ -255,20 +228,21 @@ function renderHome(): void {
       renderHome();
       if (blacklight) toast('サソリは ブラックライトで みどりいろに ひかるんだ！');
     };
-  el.querySelectorAll<HTMLButtonElement>('[data-act]').forEach((b) => (b.onclick = () => homeAction(c, b.dataset.act!)));
+  el.querySelectorAll<HTMLButtonElement>('[data-act]').forEach((b) => {
+    b.onclick = () => {
+      const act = b.dataset.act as G.Task;
+      if (act === 'feed') openFeed(r);
+      else if (act === 'train') openTraining(r);
+      else if (act === 'battle') startWild(r);
+    };
+  });
+  const bb = el.querySelector<HTMLButtonElement>('#boss');
+  if (bb) bb.onclick = () => startBoss(r);
   show('s-home');
 }
 
-function homeAction(c: G.Creature, act: string): void {
-  if (act === 'feed') return openFeed(c);
-  if (act === 'train') return openTraining(c);
-  if (act === 'sleep') return void doSleep();
-  if (act === 'essence') return void drinkEssence(c);
-  go(act);
-}
-
-async function doPet(c: G.Creature, e?: MouseEvent): Promise<void> {
-  if (c.hatched && !s.petWarned) {
+async function doPet(e?: MouseEvent): Promise<void> {
+  if (!s.petWarned) {
     s.petWarned = true;
     persist();
     await dialog('⚠️ ほんものの どく{生|い}き{物|もの}は、ぜったいに さわっちゃ ダメ！<br>これは ゲームの なかだけの とくべつだよ。', [{ label: 'わかった！', value: 'ok', primary: true }]);
@@ -276,48 +250,39 @@ async function doPet(c: G.Creature, e?: MouseEvent): Promise<void> {
   sfx('pop');
   const hab = document.getElementById('habitat');
   if (!hab) return;
-  const r = hab.getBoundingClientRect();
+  const rect = hab.getBoundingClientRect();
   const h = document.createElement('span');
   h.className = 'heart';
-  h.textContent = c.hatched ? '💜' : '🔥';
-  h.style.left = `${(e ? e.clientX - r.left : r.width / 2) - 16}px`;
-  h.style.top = `${(e ? e.clientY - r.top : r.height / 2) - 30}px`;
+  h.textContent = '💜';
+  h.style.left = `${(e ? e.clientX - rect.left : rect.width / 2) - 16}px`;
+  h.style.top = `${(e ? e.clientY - rect.top : rect.height / 2) - 30}px`;
   hab.appendChild(h);
   document.getElementById('creature')?.classList.add('happy');
   setTimeout(() => h.remove(), 1000);
 }
 
-async function drinkEssence(c: G.Creature): Promise<void> {
-  const up = G.useEssence(s, c);
-  if (up === false) return;
-  persist();
-  sfx('coin');
-  if (up) await showLevelUps([up]);
-  else toast(`けいけんち +${G.ESSENCE_EXP}！`);
-  renderHome();
-}
-
-function openFeed(c: G.Creature): void {
+// ======================= ごはん =======================
+function openFeed(r: G.Run): void {
   sfx('click');
-  const sp = SPECIES[c.species];
-  const m = modal(rb(`<div class="dlg-body"><h3 style="margin:0 0 12px">なにを あげる？（のこり ${G.MAX_MEALS - c.mealsToday}かい）</h3>
-    <div class="foods">${G.foodChoices(c)
+  const sp = SPECIES[r.species];
+  const m = modal(rb(`<div class="dlg-body"><h3 style="margin:0 0 12px">${sp.name}は なにを たべる？</h3>
+    <div class="foods">${G.foodChoices(r.species)
       .map((f) => `<button class="btn food" data-food="${f}"><span class="fe">${FOODS[f].emoji}</span>${FOODS[f].name}</button>`)
       .join('')}</div></div><div class="dlg-btns"><button class="btn" data-x>やめる</button></div>`));
   m.el.querySelector<HTMLButtonElement>('[data-x]')!.onclick = () => m.close();
   m.el.querySelectorAll<HTMLButtonElement>('[data-food]').forEach((b) => {
     b.onclick = async () => {
       const food = b.dataset.food as FoodId;
-      const r = G.feed(c, food);
+      const res = G.feed(r, food);
       persist();
       m.close();
-      if (r.ok) {
+      if (res.ok) {
         sfx('good');
-        const info = STAT_INFO[r.stat];
-        let msg = `${FOODS[food].emoji} おいしそうに たべた！<br>${info.icon} ${info.name} +${r.gain * (r.stat === 'hp' ? G.HP_PER_POINT : 1)}！`;
-        if (r.poisonUp) msg += `<br>⚔️ どくも つよく なった！ ${sp.name}は たべものから どくを ためるんだ。`;
+        const info = STAT_INFO[res.stat];
+        let msg = `${FOODS[food].emoji} おいしそうに たべた！<br>${info.icon} ${info.name} +${res.gain}！`;
+        if (res.poisonUp) msg += `<br>⚔️ こうげきも あがった！ ${sp.name}は たべものから どくを ためるんだ。`;
         toast(msg, 3200);
-      } else if (r.reason === 'wrong') {
+      } else if (res.reason === 'wrong') {
         sfx('bad');
         const real = sp.foods.map((f) => `${FOODS[f].emoji}${FOODS[f].name}`).join('や ');
         const why = FOODS[food].junk ? `${sp.name}は ${FOODS[food].name}は たべないよ。` : `${sp.name}は ${FOODS[food].name}は あまり たべないよ。`;
@@ -328,21 +293,21 @@ function openFeed(c: G.Creature): void {
   });
 }
 
+// ======================= トレーニング =======================
 const TRAIN_HINT: Partial<Record<StatKey, string>> = { spd: 'さきに うごく', res: 'どくに つよく' };
 
-function openTraining(c: G.Creature): void {
-  if (c.trainsToday >= G.MAX_TRAINS) return toast('きょうは もう つかれた みたい。ねて やすもう！');
+function openTraining(r: G.Run): void {
   sfx('click');
-  const st = G.stats(c);
+  const st = G.runStats(r);
   const cur: Record<StatKey, number> = { hp: st.maxHp, atk: st.atk, def: st.def, spd: st.spd, res: st.res };
-  const m = modal(rb(`<div class="dlg-body"><h3 style="margin:0 0 12px">なにを きたえる？</h3>
+  const m = modal(rb(`<div class="dlg-body"><h3 style="margin:0 0 12px">なにを きたえる？（1かいだけ）</h3>
     <div class="statpick">${STAT_KEYS.map((k) => `<button class="btn" data-stat="${k}">${STAT_INFO[k].icon} ${STAT_INFO[k].name}<br><small>いま ${cur[k]}${TRAIN_HINT[k] ? `・${TRAIN_HINT[k]}` : ''}</small></button>`).join('')}</div></div>
     <div class="dlg-btns"><button class="btn" data-x>やめる</button></div>`));
   m.el.querySelector<HTMLButtonElement>('[data-x]')!.onclick = () => m.close();
-  m.el.querySelectorAll<HTMLButtonElement>('[data-stat]').forEach((b) => (b.onclick = () => runTiming(c, b.dataset.stat as StatKey, m)));
+  m.el.querySelectorAll<HTMLButtonElement>('[data-stat]').forEach((b) => (b.onclick = () => runTiming(r, b.dataset.stat as StatKey, m)));
 }
 
-function runTiming(c: G.Creature, stat: StatKey, m: { el: HTMLElement; close: () => void }): void {
+function runTiming(r: G.Run, stat: StatKey, m: { el: HTMLElement; close: () => void }): void {
   sfx('click');
   const center = 25 + Math.random() * 50;
   const dlg = m.el.querySelector('.dlg')!;
@@ -364,7 +329,7 @@ function runTiming(c: G.Creature, stat: StatKey, m: { el: HTMLElement; close: ()
   let pos = 0;
   let paused = false;
   let raf = 0;
-  const speed = 1.6 + G.stageOf(c) * 0.25;
+  const speed = 1.6 + r.stage * 0.25;
   const loop = (now: number) => {
     if (!paused) {
       pos = 50 + 48 * Math.sin(((now - t0) / 1000) * speed);
@@ -386,7 +351,7 @@ function runTiming(c: G.Creature, stat: StatKey, m: { el: HTMLElement; close: ()
     if (tries >= 3) {
       cancelAnimationFrame(raf);
       document.removeEventListener('keydown', key);
-      const gain = G.applyTraining(c, stat, total);
+      const gain = G.applyTraining(r, stat, total);
       persist();
       sfx('levelup');
       res.innerHTML = rb(`${STAT_INFO[stat].icon} ${STAT_INFO[stat].name}が <b>+${gain}</b> あがった！`);
@@ -409,70 +374,20 @@ function runTiming(c: G.Creature, stat: StatKey, m: { el: HTMLElement; close: ()
   dlg.querySelector<HTMLElement>('#tbar')!.onclick = () => void press();
 }
 
-async function doSleep(): Promise<void> {
-  sfx('click');
-  const eggs = s.creatures.some((c) => !c.hatched);
-  const ok = await dialog(`ねる？ 1にち すすんで、みんなの HPが ぜんぶ かいふくするよ。${eggs ? '<br>たまごも かえるよ！' : ''}`, [
-    { label: 'ねる', value: 'yes', primary: true },
-    { label: 'まだ', value: 'no' },
-  ]);
-  if (ok !== 'yes') return;
-  const night = document.createElement('div');
-  night.className = 'night';
-  night.textContent = '🌙 💤';
-  document.body.appendChild(night);
-  await wait(1400);
-  const r = G.sleep(s);
-  persist();
-  night.remove();
-  const lines: string[] = ['☀️ おはよう！ みんな げんきに なった（HP かいふく）'];
-  if (r.hatched.length) sfx('hatch');
-  else sfx('coin');
-  for (const uid of r.hatched) {
-    const c = s.creatures.find((x) => x.uid === uid)!;
-    const sp = SPECIES[c.species];
-    lines.push(`<div style="width:150px;height:150px;margin:6px auto">${creatureSvg(c.species, 1)}</div><b>たまごが かえった！ ${sp.name}が うまれた！</b>`);
-    lines.push(`<div class="factbox">📖 まめちしき：${sp.facts[0]}</div>`);
-  }
-  if (r.newOwned.length) lines.push('📖 ずかんに あたらしい いきものが のった！');
-  lines.push(`🪙 +${r.coins}`);
-  if (r.moto) lines.push(`どくのもと「${PTYPES[r.moto].icon}${PTYPES[r.moto].name}」を 1こ ゲット！`);
-  await dialog(lines.join('<br>'), [{ label: 'OK', value: 'ok', primary: true }]);
-  renderHome();
-}
-
-async function showLevelUps(ups: G.LevelUp[]): Promise<void> {
-  if (!ups.length) return;
-  sfx('levelup');
-  const parts: string[] = [];
-  for (const u of ups) {
-    const c = s.creatures.find((x) => x.uid === u.uid);
-    if (!c) continue;
-    const sp = SPECIES[c.species];
-    parts.push(`<b>${sp.name}が レベル${u.to}に なった！</b>`);
-    if (u.newStage) {
-      const st = G.stageOf(c);
-      parts.push(`<div style="width:140px;height:140px;margin:6px auto">${creatureSvg(c.species, st)}</div>✨ ${sp.stageNames[st - 1]}に せいちょうした！`);
-      parts.push(`<div class="factbox">📖 まめちしき：${sp.facts[st - 1]}</div>`);
-    }
-  }
-  await dialog(parts.join('<br>'), [{ label: 'やったね！', value: 'ok', primary: true }]);
-}
-
-// ======================= ガチャ =======================
+// ======================= たまごガチャ（1かいの プレイに 1かい） =======================
 function renderGacha(): void {
   const el = scr('s-gacha');
-  el.innerHTML = rb(`${topbar(s.creatures.length ? 'home' : undefined)}
+  el.innerHTML = rb(`${topbar()}
   <div class="page">
-    <h2>たまごガチャ</h2>
+    <h2>きょうの たまご</h2>
     <div class="machine" id="machine">
       <div class="dome"></div>
       <div class="balls">${[0, 1, 2, 3, 4].map((i) => `<span style="left:${22 + i * 12}%;top:${18 + (i % 2) * 16}%">🥚</span>`).join('')}</div>
       <div class="base"></div><div class="slot"></div><div class="knob"></div>
     </div>
     <div id="gout" style="min-height:40px"></div>
-    <button class="btn primary" id="pull" style="font-size:26px;padding:14px 40px">${s.freeGacha ? 'むりょうで ひく！' : `🪙${G.GACHA_COST}で ひく`}</button>
-    <div class="hint">ノーマル 60% ／ レア 30% ／ げきレア 10%　・　${SPECIES_IDS.length}しゅるい　・　おなじ いきものが でたら「どくエキス」に なるよ</div>
+    <button class="btn primary" id="pull" style="font-size:26px;padding:14px 40px">たまごを ひく！</button>
+    <div class="hint">ノーマル 60% ／ レア 30% ／ げきレア 10%　・　${SPECIES_IDS.length}しゅるい　・　まだ かんせいたいに していない いきものが でやすいよ</div>
   </div>`);
   bindTop(el);
   el.querySelector<HTMLButtonElement>('#pull')!.onclick = () => void pull();
@@ -480,245 +395,107 @@ function renderGacha(): void {
 }
 
 async function pull(): Promise<void> {
-  if (!G.canGacha(s)) {
-    sfx('bad');
-    toast('コインが たりないよ。バトルで コインを ためよう！', 3200);
-    return;
-  }
   const el = scr('s-gacha');
   el.querySelector<HTMLButtonElement>('#pull')!.disabled = true;
   sfx('click');
   el.querySelector('#machine')!.classList.add('spin');
   await wait(1200);
-  const r = G.rollGacha(s)!;
+  const g = G.startRun(s);
   persist();
-  el.querySelector<HTMLElement>('#gout')!.innerHTML = `<div class="gacha-egg" id="gegg">${eggSvg(r.rarity)}</div><div style="text-align:center;font-size:24px;font-weight:700;color:${RARITY[r.rarity].color}">${RARITY[r.rarity].name}の たまご！</div>`;
-  sfx(r.rarity === 'N' ? 'coin' : 'levelup');
+  el.querySelector<HTMLElement>('#gout')!.innerHTML = `<div class="gacha-egg" id="gegg">${eggSvg(g.rarity)}</div><div style="text-align:center;font-size:24px;font-weight:700;color:${RARITY[g.rarity].color}">${RARITY[g.rarity].name}の たまご！</div>`;
+  sfx(g.rarity === 'N' ? 'coin' : 'levelup');
   await wait(900);
   el.querySelector('#gegg')?.classList.add('shake');
   await wait(1300);
-  if (r.kind === 'dup') {
-    await dialog(
-      `<div style="width:150px;height:150px;margin:auto">${creatureSvg(r.species, 3)}</div>なかを みたら… <b>${SPECIES[r.species].name}</b>だった！<br>もう なかまに いるので、<b>どくエキス ×${r.essence}</b> に なった！<br><small>どくエキスは、のませると けいけんちに なるよ。</small>`,
-      [{ label: 'OK', value: 'ok', primary: true }],
-    );
-    renderGacha();
-    return;
-  }
-  const inTeam = s.team.includes(r.creature.uid);
-  await dialog(`あたらしい たまご！ なにが うまれるかな？<br>ねると かえるよ。${inTeam ? '<br>チームに はいったよ！' : '<br>チームが いっぱいなので、なかまで いれかえてね。'}`, [
-    { label: 'OK', value: 'ok', primary: true },
-  ]);
-  s.focus = r.creature.uid;
-  persist();
+  sfx('hatch');
+  const sp = SPECIES[g.run.species];
+  await dialog(
+    `<div style="width:170px;height:170px;margin:auto">${creatureSvg(g.run.species, 1)}</div>
+    <b>たまごが かえった！ ${sp.name}の ${sp.stageNames[0]}だ！</b>${g.isNew ? '<br>🆕 はじめて そだてる いきもの！' : ''}
+    <div class="factbox">📖 まめちしき：${sp.facts[0]}</div>
+    <small>15ふんで かんせいたいを めざそう！</small>`,
+    [{ label: 'そだてる！', value: 'ok', primary: true }],
+  );
   renderHome();
 }
 
-// ======================= どくラボ =======================
-function renderLab(): void {
-  const el = scr('s-lab');
-  const c = G.focused(s);
-  const used = (t: PType) => labSlots.filter((x) => x === t).length;
-  el.innerHTML = rb(`${topbar('home')}
-  <div class="page">
-    <h2>🧪 どくラボ</h2>
-    <div class="hint" style="font-size:17px">「どくのもと」を 2つ まぜて、オリジナルの どくを つくろう！</div>
-    <div class="lab-wrap">
-      <div class="motos">
-        ${PTYPE_IDS.map((t) => {
-          const p = PTYPES[t];
-          const left = s.moto[t] - used(t);
-          return `<div class="moto" style="--tc:${p.color}">
-            <div class="head">${p.icon} ${p.name}<span class="cnt">×${s.moto[t]}</span></div>
-            <div class="desc">ほんとうの なまえ：${p.real}<br>${p.body}<br>⚔️ ${p.effect}</div>
-            <div class="row">
-              <button data-put="${t}" style="background:${p.color};color:#111" ${left <= 0 || labSlots.length >= 2 ? 'disabled' : ''}>いれる</button>
-              <button data-ess="${t}" style="background:#e7f5ff;color:#1c3d5a" ${s.essence <= 0 ? 'disabled' : ''}>エキスで つくる</button>
-            </div></div>`;
-        }).join('')}
-      </div>
-      <div class="flask">
-        <div class="slots"><div class="slotx">${labSlots[0] ? PTYPES[labSlots[0]].icon : ''}</div>＋<div class="slotx">${labSlots[1] ? PTYPES[labSlots[1]].icon : ''}</div></div>
-        <div class="pot" id="pot">⚗️</div>
-        <div style="display:flex;gap:10px">
-          <button class="btn primary" id="mix" ${labSlots.length < 2 ? 'disabled' : ''}>まぜる！</button>
-          <button class="btn" id="clear" ${labSlots.length === 0 ? 'disabled' : ''}>とりだす</button>
-        </div>
-        ${
-          c && c.hatched
-            ? `<div style="width:100%"><b>${SPECIES[c.species].name}の わざ（${c.moves.length}/${G.MAX_MOVES}）</b>
-                <div class="movelist">${c.moves.map((mv) => `<div class="mv">${esc(mv.name)}<span class="tps">${mv.types.map((t) => PTYPES[t].icon).join('')}</span></div>`).join('')}</div></div>`
-            : '<div class="hint">うまれた いきものが わざを おぼえられるよ</div>'
-        }
-      </div>
+// ======================= きょうは おしまい =======================
+function renderDone(): void {
+  const el = scr('s-home');
+  const todays = s.hall.filter((h) => h.date === G.today());
+  const last = todays[todays.length - 1] ?? s.hall[s.hall.length - 1];
+  el.innerHTML = rb(`${topbar()}
+  <div class="page done-page">
+    <h2>🌙 きょうは おしまい！</h2>
+    ${
+      last
+        ? `<div class="done-card">${kanseiArt(last.species)}<div><b style="font-size:26px">${SPECIES[last.species].name}</b><br>かんせいたいに なって でんどう いり！</div></div>`
+        : ''
+    }
+    <p style="font-size:20px">また あした、あたらしい たまごを そだてよう 👋<br>ずかんや でんどうは いつでも みられるよ。</p>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
+      <button class="btn primary" id="toHall">👑 でんどうを みる</button>
+      <button class="btn" id="toZukan">📖 ずかん</button>
+      <button class="btn" id="toWho">👥 だれが あそぶ？</button>
     </div>
   </div>`);
   bindTop(el);
-  el.querySelectorAll<HTMLButtonElement>('[data-put]').forEach((b) => {
-    b.onclick = () => {
-      sfx('pop');
-      labSlots.push(b.dataset.put as PType);
-      renderLab();
-    };
-  });
-  el.querySelectorAll<HTMLButtonElement>('[data-ess]').forEach((b) => {
-    b.onclick = () => {
-      if (G.essenceToMoto(s, b.dataset.ess as PType)) {
-        sfx('coin');
-        persist();
-        renderLab();
-      }
-    };
-  });
-  el.querySelector<HTMLButtonElement>('#clear')!.onclick = () => {
-    labSlots = [];
-    renderLab();
+  el.querySelector<HTMLButtonElement>('#toHall')!.onclick = () => {
+    zTab = 'hall';
+    go('zukan');
   };
-  el.querySelector<HTMLButtonElement>('#mix')!.onclick = () => void mix();
-  show('s-lab');
-}
-
-async function mix(): Promise<void> {
-  if (labSlots.length < 2) return;
-  const [a, b] = labSlots;
-  document.getElementById('pot')?.classList.add('brew');
-  sfx('click');
-  await wait(1600);
-  const r = G.craft(s, a, b);
-  labSlots = [];
-  if (!r) return renderLab();
-  persist();
-  sfx('levelup');
-  const kinds = [...new Set(r.move.types)];
-  let html = `<b>あたらしい どく「${esc(r.move.name)}」が できた！</b><br>${r.move.types.map((t) => PTYPES[t].icon).join(' ＋ ')}<br>`;
-  html += kinds.map((t) => `・${PTYPES[t].name}：${PTYPES[t].effect}`).join('<br>');
-  if (r.newCard) {
-    const card = MED_CARDS.find((m) => m.id === r.newCard)!;
-    html += `<div class="factbox" style="background:#e6fcf5">💊 <b>くすりカードを ゲット！</b><br>${card.from}の どくから、<b>${card.drug}</b>（${card.use}）が うまれたんだ。</div>`;
-  }
-  await dialog(html, [{ label: 'つぎへ', value: 'ok', primary: true }]);
-  const c = G.focused(s);
-  if (!c || !c.hatched) {
-    toast('うまれた いきもの しか わざを おぼえられないよ');
-    return renderLab();
-  }
-  if (c.moves.length < G.MAX_MOVES) {
-    G.learn(c, r.move);
-    sfx('good');
-    toast(`${SPECIES[c.species].name}は「${esc(r.move.name)}」を おぼえた！`);
-  } else {
-    const pick = await dialog(`わざは 4つまで。どれを わすれて「${esc(r.move.name)}」を おぼえる？`, [
-      ...c.moves.map((mv, i) => ({ label: `${esc(mv.name)} を わすれる`, value: String(i) })),
-      { label: 'おぼえない', value: 'no' },
-    ]);
-    if (pick !== 'no') {
-      G.learn(c, r.move, Number(pick));
-      sfx('good');
-    }
-  }
-  persist();
-  renderLab();
-}
-
-// ======================= バトルを えらぶ =======================
-function renderBattleSelect(): void {
-  const el = scr('s-boss');
-  const top = G.topLevel(s);
-  el.innerHTML = rb(`${topbar('home')}
-  <div class="page">
-    <h2>⚔️ バトル</h2>
-    <div class="hint" style="font-size:17px">チームの いちばん たかい レベル：<b style="color:#fff">Lv${top}</b></div>
-    <h3 class="sect">やせいの いきもの（なんかいでも たたかえる）</h3>
-    <div class="cards">${AREAS.map((a, i) => {
-      const open = G.areaUnlocked(s, i);
-      const pool = SPECIES_IDS.filter((id) => SPECIES[id].area === a.id);
-      const met = pool.filter((id) => s.met.includes(id) || s.owned.includes(id)).length;
-      return `<button class="card area ${open ? '' : 'locked'}" data-area="${i}" ${open ? '' : 'disabled'} style="background:${a.bg}">
-        <span class="aicon">${a.icon}</span><span class="ttl">${a.name}</span>
-        <span class="sub">${open ? `Lv${a.levels[0]}〜${a.levels[1]}　であった ${met}/${pool.length}` : `Lv${a.unlockLevel}に なると いける`}</span></button>`;
-    }).join('')}</div>
-    <h3 class="sect">ボス</h3>
-    <div class="cards">${BOSSES.map((b, i) => {
-      const beaten = s.bossBeaten.includes(b.id);
-      const weak = Object.keys(b.resist) as PType[];
-      return `<div class="card" style="width:250px"><div class="pic" style="width:150px;height:150px">${bossSvg(b.id)}</div>
-        <div class="ttl">${b.name} ${beaten ? '✅' : ''}</div>
-        <div class="sub">おすすめ Lv${b.recLevel}<br>ききにくい どく：${weak.length ? weak.map((t) => PTYPES[t].icon + PTYPES[t].name).join('、') : 'なし'}</div>
-        <button class="btn ${beaten ? '' : 'pink'}" data-boss="${i}">${beaten ? 'もういちど' : 'たたかう！'}</button></div>`;
-    }).join('')}</div>
-  </div>`);
-  bindTop(el);
-  const ready = () => {
-    const fighters = G.teamMembers(s).filter((c) => c.hatched && c.hp > 0);
-    if (!fighters.length) {
-      toast(G.teamMembers(s).some((c) => c.hatched) ? 'チームが つかれているよ。ねて かいふくしよう！' : 'たまごの ままでは たたかえないよ。ねて かえそう！', 3000);
-      return null;
-    }
-    return fighters;
+  el.querySelector<HTMLButtonElement>('#toZukan')!.onclick = () => {
+    zTab = 'ikimono';
+    go('zukan');
   };
-  el.querySelectorAll<HTMLButtonElement>('[data-area]').forEach((b) => {
-    b.onclick = () => {
-      const f = ready();
-      if (f) startBattle(f, G.rollWild(Number(b.dataset.area)), null);
-    };
-  });
-  el.querySelectorAll<HTMLButtonElement>('[data-boss]').forEach((b) => {
-    b.onclick = () => {
-      const f = ready();
-      if (f) startBattle(f, null, Number(b.dataset.boss));
-    };
-  });
-  show('s-boss');
+  el.querySelector<HTMLButtonElement>('#toWho')!.onclick = () => renderProfile();
+  show('s-home');
 }
 
-// ======================= バトル（1たい1・こうたい あり） =======================
-function unitCard(side: 'p' | 'e', u: Unit, art: string): string {
-  return `<div class="unit ${side}" data-side="${side}">
+// ======================= じゃんけんバトル =======================
+function startWild(r: G.Run): void {
+  const w = G.rollWild(r);
+  runDuel(r, new Duel(playerFighter(r), wildFighter(w.species, w.level, r.stage)), null);
+}
+
+function startBoss(r: G.Run): void {
+  runDuel(r, new Duel(playerFighter(r), bossFighter(r, G.bossFor(s))), G.bossFor(s));
+}
+
+
+function fighterCard(u: Fighter, art: string): string {
+  const habit = u.side === 'e' ? `<div class="habit">くせ：${handLabel(u.fav)}を よく だす</div>` : '';
+  return `<div class="unit ${u.side}" data-side="${u.side}">
     <div class="uhp"><div class="unm"><span>${u.name}</span><span>Lv${u.level}</span></div>
       <div class="track"><div class="fill"></div></div>
-      <div class="uhpn"></div><div class="marks"></div></div>
+      <div class="uhpn"></div><div class="marks"></div>${habit}</div>
     <div class="pic">${art}</div></div>`;
 }
 
-function startBattle(team: G.Creature[], wild: { species: string; level: number }[] | null, bossIndex: number | null): void {
+function runDuel(r: G.Run, duel: Duel, bossIndex: number | null): void {
   sfx('click');
   bgm.play(BATTLE_SONG);
-  const battle = new Battle(team, wild, bossIndex);
-  const bg = bossIndex != null ? BOSSES[bossIndex].bg : AREAS[AREAS.findIndex((a) => SPECIES[wild![0].species].area === a.id)]?.bg ?? AREAS[0].bg;
-  const foeArt = (u: Unit) => (bossIndex != null ? bossSvg(BOSSES[bossIndex].id) : creatureSvg(u.species!, 3));
-  const myArt = (u: Unit, flip = true) => artOf(team[u.idx], flip);
+  const area = G.areaOf(r.species);
+  const bg = bossIndex != null ? BOSSES[bossIndex].bg : area.bg;
+  const foeArt = bossIndex != null ? bossSvg(BOSSES[bossIndex].id) : creatureSvg(duel.foe.species!, r.stage);
   const el = scr('s-battle');
-  const hello = bossIndex != null ? `${BOSSES[bossIndex].name}が あらわれた！` : `やせいの ${battle.foe().name}が あらわれた！`;
   el.innerHTML = rb(`
   <div class="arena duel" style="background:${bg}">
-    <div class="side foe" id="foe"></div>
-    <div class="side me" id="me"></div>
-    <div class="bench" id="bench"></div>
+    <div class="side foe">${fighterCard(duel.foe, foeArt)}</div>
+    <div class="side me">${fighterCard(duel.me, creatureSvg(r.species, r.stage, true))}</div>
+    <div class="jk" id="jk"></div>
   </div>
   <div class="bpanel">
-    <div class="msg" id="bmsg">${hello}</div>
-    <div class="cmd" id="cmd"></div>
+    <div class="msg" id="bmsg">${bossIndex != null ? `ボス ${BOSSES[bossIndex].name}が あらわれた！` : `やせいの ${duel.foe.name}が あらわれた！`}</div>
+    <div class="cmd hands" id="cmd"></div>
   </div>`);
   const msg = el.querySelector<HTMLElement>('#bmsg')!;
   const cmd = el.querySelector<HTMLElement>('#cmd')!;
+  const jk = el.querySelector<HTMLElement>('#jk')!;
   const unitEl = (side: Side) => el.querySelector<HTMLElement>(`.unit[data-side="${side}"]`)!;
-  const drawSide = (side: Side) => {
-    const u = side === 'p' ? battle.me() : battle.foe();
-    el.querySelector<HTMLElement>(side === 'p' ? '#me' : '#foe')!.innerHTML = rb(unitCard(side, u, side === 'p' ? myArt(u) : foeArt(u)));
-  };
-  const drawBench = () => {
-    const others = battle.players.filter((u) => u.idx !== battle.active.p);
-    el.querySelector<HTMLElement>('#bench')!.innerHTML = others.length
-      ? rb(`<div class="bench-ttl">まっている なかま</div><div class="bench-row">${others
-          .map((u) => `<div class="bslot ${u.hp <= 0 ? 'ko' : ''}"><div class="bpic">${myArt(u, false)}</div><div class="bnm">${u.name}</div>
-            <div class="thp"><span style="width:${(u.hp / u.maxHp) * 100}%"></span></div></div>`)
-          .join('')}</div>`)
-      : '';
-  };
   const refresh = () => {
-    for (const side of ['p', 'e'] as Side[]) {
-      const u = side === 'p' ? battle.me() : battle.foe();
-      const ue = unitEl(side);
+    for (const u of [duel.me, duel.foe]) {
+      const ue = unitEl(u.side);
       const pct = (u.hp / u.maxHp) * 100;
       const fill = ue.querySelector<HTMLElement>('.fill')!;
       fill.style.width = `${pct}%`;
@@ -727,75 +504,59 @@ function startBattle(team: G.Creature[], wild: { species: string; level: number 
       ue.querySelector<HTMLElement>('.marks')!.innerHTML = markLabels(u).map(([l, c]) => `<span style="background:${c}">${l}</span>`).join('');
       ue.classList.toggle('ko', u.hp <= 0);
     }
-    drawBench();
   };
   const floatText = (side: Side, text: string, cls: string) => {
-    const r = unitEl(side).querySelector<HTMLElement>('.pic')!.getBoundingClientRect();
+    const rect = unitEl(side).querySelector<HTMLElement>('.pic')!.getBoundingClientRect();
     const d = document.createElement('div');
     d.className = `dmg ${cls}`;
     d.textContent = text;
-    d.style.left = `${r.left + r.width / 2 - 30}px`;
-    d.style.top = `${r.top + r.height / 3}px`;
+    d.style.left = `${rect.left + rect.width / 2 - 30}px`;
+    d.style.top = `${rect.top + rect.height / 3}px`;
     document.body.appendChild(d);
     setTimeout(() => d.remove(), 1000);
   };
-  const menu = (): void => {
-    if (battle.over) return;
-    if (battle.needSendOut()) return void pickSendOut();
-    const u = battle.me();
-    const canSwap = battle.benchAlive().length > 0;
-    msg.innerHTML = rb(`${esc(u.name)}の ばん。どうする？`);
+  let busy = false;
+  const menu = () => {
+    busy = false;
+    msg.innerHTML = rb(`どの 手を だす？　<small>（${handLabel(duel.foe.fav)}が すきな あいてだよ）</small>`);
     cmd.innerHTML = rb(
-      u.moves.map((m, i) => `<button class="bmove" data-mv="${i}">${m.types.map((t) => PTYPES[t].icon).join('') || '👊'} ${esc(m.name)}</button>`).join('') +
-        `<button class="bmove swap" data-swap ${canSwap ? '' : 'disabled'}>🔁 こうたい</button><button class="bmove run" data-run>🏃 にげる</button>`,
+      HAND_IDS.map((h) => {
+        const m = duel.me.moves[h];
+        return `<button class="hand h-${h}" data-hand="${h}"><span class="hi">${HANDS[h].icon}</span><b>${HANDS[h].name}</b><span class="hn">${esc(m.name)}</span><small>${HANDS[h].role}・${HANDS[HANDS[h].beats].icon}に かつ</small></button>`;
+      }).join('') + `<button class="bmove run" data-run>🏃 にげる</button>`,
     );
-    cmd.querySelectorAll<HTMLButtonElement>('[data-mv]').forEach((b) => (b.onclick = () => void runTurn({ kind: 'move', move: Number(b.dataset.mv) })));
-    cmd.querySelector<HTMLButtonElement>('[data-swap]')!.onclick = () => openSwitch(false);
+    cmd.querySelectorAll<HTMLButtonElement>('[data-hand]').forEach((b) => (b.onclick = () => void choose(b.dataset.hand as Hand)));
     cmd.querySelector<HTMLButtonElement>('[data-run]')!.onclick = () => void runAway();
   };
-  // こうたい（forced：たおれたので つぎを だす）
-  const openSwitch = (forced: boolean) => {
-    sfx('click');
-    msg.innerHTML = rb(forced ? `${esc(battle.me().name)}は たおれた… つぎは だれを だす？` : 'だれと こうたいする？（こうたいは こうげきより さきに できるよ）');
-    cmd.innerHTML = rb(
-      battle
-        .benchAlive()
-        .map((u) => `<button class="bmove pick" data-to="${u.idx}"><span class="bm-pic">${myArt(u, false)}</span>${esc(u.name)}<small>${u.hp}/${u.maxHp}</small></button>`)
-        .join('') + (forced ? '' : '<button class="bmove run" data-back>もどる</button>'),
-    );
-    cmd.querySelectorAll<HTMLButtonElement>('[data-to]').forEach((b) => {
-      b.onclick = async () => {
-        const to = Number(b.dataset.to);
-        if (forced) {
-          cmd.innerHTML = '';
-          await play(battle.sendOut(to));
-          menu();
-        } else void runTurn({ kind: 'switch', to });
-      };
-    });
-    const back = cmd.querySelector<HTMLButtonElement>('[data-back]');
-    if (back) back.onclick = () => menu();
-  };
-  const pickSendOut = async () => {
-    const bench = battle.benchAlive();
-    if (bench.length === 1) {
-      cmd.innerHTML = '';
-      await play(battle.sendOut(bench[0].idx));
-      return menu();
-    }
-    openSwitch(true);
-  };
-  const runTurn = async (choice: Choice) => {
+  const choose = async (h: Hand) => {
+    if (busy || duel.over) return;
+    busy = true;
     sfx('click');
     cmd.innerHTML = '';
-    await play(battle.turn(choice));
-    menu();
+    await play(duel.turn(h));
+    if (!duel.over) menu();
+  };
+  const keys = (e: KeyboardEvent) => {
+    const map: Record<string, Hand> = { Digit1: 'gu', Digit2: 'choki', Digit3: 'pa', Numpad1: 'gu', Numpad2: 'choki', Numpad3: 'pa' };
+    if (map[e.code] && !busy && scr('s-battle').classList.contains('on')) void choose(map[e.code]);
+  };
+  document.addEventListener('keydown', keys);
+  const cleanup = () => document.removeEventListener('keydown', keys);
+  const showJanken = async (me: Hand, foe: Hand, result: 'win' | 'lose' | 'draw', first: Side) => {
+    const word = result === 'win' ? 'かち！ さきに こうげき！' : result === 'lose' ? 'まけ… あいてが さきに こうげき' : `あいこ！ ${first === 'p' ? 'はやさで かって さきに こうげき！' : 'あいてが はやくて さきに こうげき'}`;
+    jk.innerHTML = rb(`<div class="jk-row"><span class="jk-h">${HANDS[me].icon}</span><span class="jk-vs">VS</span><span class="jk-h">${HANDS[foe].icon}</span></div><div class="jk-res ${result}">${word}</div>`);
+    jk.classList.add('on');
+    sfx(result === 'win' ? 'good' : result === 'lose' ? 'bad' : 'pop');
+    await wait(1300);
+    jk.classList.remove('on');
   };
   const play = async (events: BattleEvent[]) => {
     for (const e of events) {
-      if (e.kind === 'text') {
+      if (e.kind === 'janken') {
+        await showJanken(e.me, e.foe, e.result, e.first);
+      } else if (e.kind === 'text') {
         msg.innerHTML = rb(esc(e.text));
-        await wait(750);
+        await wait(700);
       } else if (e.kind === 'hit') {
         const pic = unitEl(e.side).querySelector<HTMLElement>('.pic')!;
         pic.classList.remove('shake', 'flash');
@@ -805,14 +566,14 @@ function startBattle(team: G.Creature[], wild: { species: string; level: number 
         floatText(e.side, `-${e.amount}`, e.crit ? 'crit' : '');
         refresh();
         await wait(450);
+      } else if (e.kind === 'heal') {
+        sfx('good');
+        floatText(e.side, `+${e.amount}`, 'heal');
+        refresh();
+        await wait(300);
       } else if (e.kind === 'dodge') {
         sfx('miss');
         floatText(e.side, 'ミス！', 'miss');
-        await wait(300);
-      } else if (e.kind === 'switch') {
-        drawSide(e.side);
-        refresh();
-        sfx('pop');
         await wait(300);
       } else if (e.kind === 'mark' || e.kind === 'ko') {
         refresh();
@@ -820,117 +581,104 @@ function startBattle(team: G.Creature[], wild: { species: string; level: number 
         await wait(250);
       } else if (e.kind === 'end') {
         await wait(400);
+        cleanup();
         await finish(e.win);
         return;
       }
     }
     refresh();
   };
-  const writeBack = () => battle.players.forEach((u) => (team[u.idx].hp = u.hp));
   const runAway = async () => {
-    const a = await dialog('にげる？', [
+    const a = await dialog('にげる？（バトルは かぞえないよ）', [
       { label: 'にげる', value: 'yes' },
       { label: 'たたかう', value: 'no', primary: true },
     ]);
     if (a !== 'yes') return;
-    writeBack();
+    cleanup();
+    G.healFull(r);
     persist();
-    bgm.play(HOME_SONG);
-    renderBattleSelect();
+    renderHome();
   };
   const finish = async (win: boolean) => {
-    writeBack();
-    const survivors = team.filter((c) => c.hp > 0);
+    if (bossIndex != null) {
+      if (win) return void celebrateKansei(bossIndex);
+      sfx('lose');
+      G.loseBoss(r);
+      persist();
+      await dialog(
+        `まけちゃった… でも だいじょうぶ！ HPは もとに もどったよ。<div class="factbox" style="background:#fff4d6">💡 ヒント：${BOSSES[bossIndex].hint}</div>`,
+        [{ label: 'もういちど いどむ', value: 'ok', primary: true }],
+      );
+      renderHome();
+      return;
+    }
     if (win) {
       sfx('win');
-      if (bossIndex != null) {
-        const boss = BOSSES[bossIndex];
-        const r = G.bossReward(s, bossIndex, survivors);
-        persist();
-        let html = `<b>🎉 ${boss.name}を たおした！</b><br>けいけんち +${r.exp}　🪙 +${r.coins}<br>どくのもと ぜんぶの しゅるい +${r.moto}`;
-        if (r.first) html += `<div class="factbox">📖 ${boss.fact}</div>`;
-        if (r.first && bossIndex === BOSSES.length - 1) html += '<br><b>👑 ぜんぶの ボスを たおした！ きみは ベノムマスター！</b>';
-        await dialog(html, [{ label: 'OK', value: 'ok', primary: true }]);
-        await showLevelUps(r.ups);
-      } else {
-        const r = G.wildReward(s, wild!, survivors);
-        persist();
-        const drops = r.moto.map((t) => PTYPES[t].icon + PTYPES[t].name).join('、');
-        await dialog(`<b>🎉 かった！</b><br>けいけんち +${r.exp}（たおれていない なかま みんなに）<br>🪙 +${r.coins}${drops ? `<br>どくのもと ゲット：${drops}` : ''}`, [{ label: 'OK', value: 'ok', primary: true }]);
-        await showLevelUps(r.ups);
-      }
+      const up = G.winWild(s, r, duel.foe.species!);
+      persist();
+      await dialog(`<b>🎉 かった！</b><br>レベル ${up.from} → <b>${up.to}</b>　（バトル ${r.wins} / ${G.WINS_PER_STAGE}）`, [{ label: 'OK', value: 'ok', primary: true }]);
+      await maybeGrow(r);
     } else {
       sfx('lose');
+      G.healFull(r);
       persist();
-      const hint = bossIndex != null ? `<div class="factbox" style="background:#fff4d6">💡 ヒント：${BOSSES[bossIndex].hint}</div><div class="factbox">📖 ${BOSSES[bossIndex].fact}</div>` : '<div class="factbox" style="background:#fff4d6">💡 ねて HPを かいふくしてから、もういちど いどもう！ ごはんや トレーニングでも つよく なれるよ。</div>';
-      await dialog(`まけちゃった… でも だいじょうぶ！<br>${hint}`, [{ label: 'OK', value: 'ok', primary: true }]);
+      await dialog(`まけちゃった… HPは もとに もどったよ。<div class="factbox" style="background:#fff4d6">💡 あいての「くせ」を みて、かてる 手を だそう！ ${HANDS.gu.icon}は${HANDS.choki.icon}に、${HANDS.choki.icon}は${HANDS.pa.icon}に、${HANDS.pa.icon}は${HANDS.gu.icon}に かつよ。</div>`, [{ label: 'OK', value: 'ok', primary: true }]);
     }
-    bgm.play(HOME_SONG);
-    renderBattleSelect();
+    renderHome();
   };
-  drawSide('e');
-  drawSide('p');
   refresh();
   show('s-battle');
-  setTimeout(async () => {
-    msg.innerHTML = rb(`いけ！ ${esc(battle.me().name)}！`);
-    await wait(700);
-    menu();
-  }, 900);
+  setTimeout(menu, 900);
 }
 
-// ======================= なかま（チームへんしゅう） =======================
-function renderNakama(): void {
-  const el = scr('s-nakama');
-  el.innerHTML = rb(`${topbar('home')}
-  <div class="page">
-    <h2>🐾 なかま</h2>
-    <div class="hint" style="font-size:17px">チームは 3びきまで。チームの なかまが バトルに でるよ。</div>
-    <div class="cards">${s.creatures
-      .map((c) => {
-        const inTeam = s.team.includes(c.uid);
-        const st = G.stats(c);
-        return `<div class="card ${inTeam ? 'sel' : ''}">
-          <div class="pic">${artOf(c)}</div>
-          <div class="ttl">${spName(c)}</div>
-          <div class="sub">${c.hatched ? `Lv${c.level}　❤️${c.hp}/${st.maxHp}　⚔️${st.atk}　🛡️${st.def}` : 'ねると かえるよ'}</div>
-          <div class="cardbtns">
-            <button class="btn small" data-team="${c.uid}">${inTeam ? 'チームから はずす' : 'チームに いれる'}</button>
-            <button class="btn small" data-look="${c.uid}">ホームで みる</button>
-          </div></div>`;
-      })
-      .join('')}</div>
-  </div>`);
-  bindTop(el);
-  el.querySelectorAll<HTMLButtonElement>('[data-team]').forEach((b) => {
-    b.onclick = () => {
-      const u = b.dataset.team!;
-      if (s.team.includes(u)) s.team = s.team.filter((x) => x !== u);
-      else if (s.team.length >= G.TEAM_SIZE) return toast('チームは 3びきまで。だれかを はずしてね');
-      else s.team.push(u);
-      sfx('click');
-      persist();
-      renderNakama();
-    };
-  });
-  el.querySelectorAll<HTMLButtonElement>('[data-look]').forEach((b) => {
-    b.onclick = () => {
-      s.focus = b.dataset.look!;
-      blacklight = false;
-      persist();
-      go('home');
-    };
-  });
-  show('s-nakama');
+// やることが ぜんぶ おわったら つぎの すがたへ
+async function maybeGrow(r: G.Run): Promise<void> {
+  if (r.stage < 3 && G.stageDone(r)) {
+    G.growUp(s, r);
+    persist();
+    sfx('levelup');
+    const sp = SPECIES[r.species];
+    const mv = G.movesFor(r.species, r.stage);
+    await dialog(
+      `<div style="width:170px;height:170px;margin:auto">${creatureSvg(r.species, r.stage)}</div>
+      ✨ <b>${sp.name}が ${sp.stageNames[r.stage - 1]}に せいちょうした！</b>（Lv ${r.level}）
+      <div class="factbox">📖 まめちしき：${sp.facts[r.stage - 1]}</div>
+      わざが つよく なった！ ${HAND_IDS.map((h) => `${HANDS[h].icon}${mv[h].name}`).join('　')}`,
+      [{ label: 'やったね！', value: 'ok', primary: true }],
+    );
+  } else if (r.stage === 3 && G.stageDone(r)) {
+    await dialog(`👑 じゅんび OK！ ボス「${BOSSES[G.bossFor(s)].name}」に かつと かんせいたいに なれるよ！`, [{ label: 'OK', value: 'ok', primary: true }]);
+  }
+}
+
+async function celebrateKansei(bossIndex: number): Promise<void> {
+  const r = s.run!;
+  const sp = SPECIES[r.species];
+  const boss = BOSSES[bossIndex];
+  const res = G.completeRun(s, bossIndex);
+  persist();
+  sfx('win');
+  await wait(300);
+  sfx('levelup');
+  let html = `<div style="width:200px;height:200px;margin:auto">${kanseiArt(sp.id)}</div>
+    <b style="font-size:24px">👑 ${sp.name}は かんせいたいに なった！</b><br>でんどうに はいったよ！（${new Set(s.hall.map((h) => h.species)).size} / ${SPECIES_IDS.length}）`;
+  if (res.firstBoss) html += `<div class="factbox">⚔️ ${boss.name}を はじめて たおした！ 📖 ${boss.fact}</div>`;
+  for (const id of res.newCards) {
+    const c = MED_CARDS.find((m) => m.id === id)!;
+    html += `<div class="factbox" style="background:#e6fcf5">💊 くすりカード「${c.drug}」を てに いれた！ ${c.from}の どくから うまれた ${c.use}。</div>`;
+  }
+  await dialog(html, [{ label: 'やったね！', value: 'ok', primary: true }]);
+  renderHome();
 }
 
 // ======================= ずかん =======================
 function renderZukan(): void {
   const el = scr('s-zukan');
-  const tabs: [typeof zTab, string][] = [['ikimono', '🐍 いきもの'], ['doku', '🧪 どく'], ['boss', '⚔️ ボス'], ['kusuri', '💊 くすりカード']];
+  const hallSet = new Set(s.hall.map((h) => h.species));
+  const tabs: [typeof zTab, string][] = [['ikimono', '🐍 いきもの'], ['hall', '👑 でんどう'], ['doku', '🧪 どく'], ['boss', '⚔️ ボス'], ['kusuri', '💊 くすりカード']];
   let body = '';
   if (zTab === 'ikimono') {
-    body = `<div class="hint" style="font-size:17px">なかまに した いきもの ${s.owned.length} / ${SPECIES_IDS.length}　・　であった いきもの ${new Set([...s.owned, ...s.met]).size}</div>
+    body = `<div class="hint" style="font-size:17px">そだてた いきもの ${s.owned.length} / ${SPECIES_IDS.length}　・　かんせいたい ${hallSet.size}　・　であった いきもの ${new Set([...s.owned, ...s.met]).size}</div>
     ${AREAS.map(
       (a) => `<h3 class="sect">${a.icon} ${a.name}</h3><div class="cards">${SPECIES_IDS.filter((id) => SPECIES[id].area === a.id)
         .map((id) => {
@@ -938,26 +686,36 @@ function renderZukan(): void {
           const met = own || s.met.includes(id);
           const sp = SPECIES[id];
           return `<div class="card zk ${met ? '' : 'locked'}" ${met ? `data-sp="${id}" style="cursor:pointer"` : ''}>
-            <div class="pic">${creatureSvg(id, own ? Math.max(1, s.factsSeen[id] ?? 1) : 3)}</div>
-            <div class="ttl">${met ? sp.name : '？？？'}</div><div class="sub">${RARITY[sp.rarity].name}${met && !own ? '・であった' : ''}</div></div>`;
+            <div class="pic">${hallSet.has(id) ? kanseiArt(id) : creatureSvg(id, own ? Math.max(1, s.factsSeen[id] ?? 1) : 3)}</div>
+            <div class="ttl">${hallSet.has(id) ? '👑 ' : ''}${met ? sp.name : '？？？'}</div><div class="sub">${RARITY[sp.rarity].name}${met && !own ? '・であった' : ''}</div></div>`;
         })
         .join('')}</div>`,
     ).join('')}`;
+  } else if (zTab === 'hall') {
+    body = s.hall.length
+      ? `<div class="hint" style="font-size:17px">かんせいたいに した いきもの（${hallSet.size} / ${SPECIES_IDS.length}しゅるい）。ぜんぶ あつめよう！</div>
+        <div class="cards">${[...s.hall]
+          .reverse()
+          .map((h) => `<div class="card zk hall" data-sp="${h.species}" style="cursor:pointer"><div class="pic">${kanseiArt(h.species)}</div><div class="ttl">👑 ${SPECIES[h.species].name}</div><div class="sub">${h.date.replace(/-/g, '/')}</div></div>`)
+          .join('')}</div>`
+      : '<div class="hint" style="font-size:18px">まだ だれも いないよ。たまごを かんせいたいまで そだてると、ここに のるよ！</div>';
   } else if (zTab === 'doku') {
-    body = `<div class="motos">${PTYPE_IDS.map((t) => {
+    body = `<div class="motos">${(['gu', 'choki', 'pa'] as Hand[])
+      .map((h) => `<div class="moto" style="--tc:${HANDS[h].color}"><div class="head">${HANDS[h].icon} ${HANDS[h].name}：${HANDS[h].role}</div><div class="desc" style="font-size:16px">${HANDS[HANDS[h].beats].icon}${HANDS[HANDS[h].beats].name}に かつ（${HANDS[h].why}）</div></div>`)
+      .join('')}${PTYPE_IDS.map((t) => {
       const p = PTYPES[t];
-      return `<div class="moto" style="--tc:${p.color}"><div class="head">${p.icon} ${p.name}</div><div class="desc" style="font-size:16px">ほんとうの なまえ：${p.real}<br>からだへの ききかた：${p.body}<br>バトルでは：${p.effect}</div></div>`;
+      return `<div class="moto" style="--tc:${p.color}"><div class="head">${p.icon} ${p.name}</div><div class="desc" style="font-size:16px">ほんとうの なまえ：${p.real}<br>からだへの ききかた：${p.body}<br>バトルでは（✌️チョキの とき）：${p.effect}</div></div>`;
     }).join('')}</div>`;
   } else if (zTab === 'boss') {
     body = `<div class="cards">${BOSSES.map((b) => {
       const ok = s.bossBeaten.includes(b.id);
-      return `<div class="card ${ok ? '' : 'locked'}" style="width:280px"><div class="pic">${bossSvg(b.id)}</div><div class="ttl">${ok ? b.name : '？？？'}</div><div class="sub">${ok ? `${b.where}<br>${b.fact}` : 'たおすと わかるよ'}</div></div>`;
+      return `<div class="card ${ok ? '' : 'locked'}" style="width:280px"><div class="pic">${bossSvg(b.id)}</div><div class="ttl">${ok ? b.name : '？？？'}</div><div class="sub">${ok ? `${b.where}<br>${b.fact}<br>くせ：${handLabel(b.fav)}` : 'たおすと わかるよ'}</div></div>`;
     }).join('')}</div>`;
   } else {
-    body = `<div class="hint" style="font-size:17px">どくは つかいかたしだいで くすりにも なる！ どくラボで どくを まぜると てに はいるよ。</div><div class="cards">${MED_CARDS.map((m) => {
+    body = `<div class="hint" style="font-size:17px">どくは つかいかたしだいで くすりにも なる！ かんけいする いきものを かんせいたいに すると てに はいるよ。</div><div class="cards">${MED_CARDS.map((m) => {
       const ok = s.cards.includes(m.id);
       return `<div class="card" style="width:280px;${ok ? '' : 'opacity:.6'}"><div style="font-size:64px">${ok ? '💊' : '❓'}</div><div class="ttl">${ok ? m.drug : '？？？'}</div>
-        <div class="sub">${ok ? `${m.from}の どくから<br>→ ${m.use}` : `ヒント：${PTYPES[m.unlock[0]].icon} と ${PTYPES[m.unlock[1]].icon} を まぜてみよう`}</div>
+        <div class="sub">${ok ? `${m.from}の どくから<br>→ ${m.use}` : `ヒント：${m.species.map((id) => SPECIES[id].name).join('か ')}を かんせいたいに しよう`}</div>
         ${ok ? `<button class="btn" data-card="${m.id}">もっと しる</button>` : ''}</div>`;
     }).join('')}</div>`;
   }
@@ -985,15 +743,18 @@ function openSpecies(id: string): void {
   sfx('click');
   const sp = SPECIES[id];
   const own = s.owned.includes(id);
+  const done = s.hall.some((h) => h.species === id);
   const stg = own ? Math.max(1, s.factsSeen[id] ?? 1) : 0;
-  const facts = sp.facts.map((f, i) => (i < stg ? `<div class="fact">📖 ${f}</div>` : `<div class="fact" style="opacity:.6">？ ${own ? 'もっと そだてると わかるよ' : 'なかまに すると わかるよ'}</div>`)).join('');
+  const facts = sp.facts.map((f, i) => (i < stg ? `<div class="fact">📖 ${f}</div>` : `<div class="fact" style="opacity:.6">？ ${own ? 'もっと そだてると わかるよ' : 'そだてると わかるよ'}</div>`)).join('');
+  const mv = G.movesFor(id, 3);
   const m = modal(rb(`<div class="zk-detail">
-    <div class="bigpic">${creatureSvg(id, Math.max(1, stg || 3))}</div>
+    <div class="bigpic">${done ? kanseiArt(id) : creatureSvg(id, Math.max(1, stg || 3))}</div>
     <div class="zk-text">
-      <b style="font-size:26px">${sp.name}</b>（${RARITY[sp.rarity].name}）<br>
+      <b style="font-size:26px">${done ? '👑 ' : ''}${sp.name}</b>（${RARITY[sp.rarity].name}）<br>
       🏠 すむところ：${sp.where}<br>📏 おおきさ：${sp.size}<br>
       🍽️ たべもの：${sp.foods.map((f) => FOODS[f].emoji + FOODS[f].name).join('、')}<br>
       🧪 どく：${sp.types.map((t) => PTYPES[t].icon + PTYPES[t].name).join('、')}<br>
+      🎮 わざ：${HAND_IDS.map((h) => `${HANDS[h].icon}${mv[h].name.replace('スーパー ', '')}`).join('　')}<br>
       ${facts}
       ${sp.truth && own ? `<div class="truth">🔎 ほんとうは… ${sp.truth}</div>` : ''}
       <div class="safe">⚠️ ほんものを {見|み}つけても ぜったいに さわらないで、おとなに しらせてね！</div>
@@ -1002,16 +763,39 @@ function openSpecies(id: string): void {
 }
 
 // ======================= せってい =======================
+async function parentCheck(): Promise<boolean> {
+  const a = 6 + Math.floor(Math.random() * 7);
+  const b = 12 + Math.floor(Math.random() * 8);
+  return new Promise((resolve) => {
+    const m = modal(`<div class="dlg-body"><h3 style="margin:0 0 8px">おうちの かたへ</h3>
+      きょう もう1ぴき そだてられるように します。<br>おうちの かたが こたえて ください：<b style="font-size:22px">${a} × ${b} = ?</b>
+      <input id="pc-ans" inputmode="numeric" style="font-size:24px;width:140px;margin-top:10px;padding:6px 10px;border-radius:10px;border:2px solid #b9add9" autocomplete="off"></div>
+      <div class="dlg-btns"><button class="btn" data-x>やめる</button><button class="btn primary" data-ok>OK</button></div>`);
+    const input = m.el.querySelector<HTMLInputElement>('#pc-ans')!;
+    input.focus();
+    m.el.querySelector<HTMLButtonElement>('[data-x]')!.onclick = () => {
+      m.close();
+      resolve(false);
+    };
+    m.el.querySelector<HTMLButtonElement>('[data-ok]')!.onclick = () => {
+      m.close();
+      resolve(Number(input.value.trim()) === a * b);
+    };
+  });
+}
+
 function renderSettings(): void {
   const el = scr('s-settings');
   const ss = getSoundSettings();
   const T = (k: keyof typeof ss, label: string) => `<div class="toggle"><span>${label}</span><button class="btn ${ss[k] ? 'primary' : ''}" data-snd="${k}">${ss[k] ? 'ON' : 'OFF'}</button></div>`;
+  const state = s.run ? 'いま そだてている とちゅう' : G.doneToday(s) ? 'きょうは おしまい（1ぴき そだてた）' : 'あたらしい たまごを ひける';
   el.innerHTML = rb(`${topbar('home')}
   <div class="page"><h2>⚙️ せってい</h2>
     ${T('bgm', '🎵 おんがく')}${T('sfx', '🔔 こうかおん')}${T('voice', '🗣️ こえ')}
     <div class="toggle"><span>💾 セーブを ファイルに ほぞん</span><button class="btn" id="exp">ほぞん</button></div>
     <div class="toggle"><span>📂 ファイルから よみこむ</span><button class="btn" id="imp">よみこむ</button></div>
     <div class="toggle"><span>👥 だれが あそぶ？に もどる</span><button class="btn" id="who">もどる</button></div>
+    <div class="toggle"><span>👪 おうちの かた：きょう もう1ぴき<br><small>いまは：${state}</small></span><button class="btn" id="extra" ${G.doneToday(s) ? '' : 'disabled'}>ゆるす</button></div>
     <div class="toggle"><span>🗑️ さいしょから やりなおす</span><button class="btn" id="reset" style="background:#ffc9c9">やりなおす</button></div>
   </div>`);
   bindTop(el);
@@ -1037,6 +821,18 @@ function renderSettings(): void {
     } else toast('よみこめなかった…');
   };
   el.querySelector<HTMLButtonElement>('#who')!.onclick = () => renderProfile();
+  el.querySelector<HTMLButtonElement>('#extra')!.onclick = async () => {
+    if (await parentCheck()) {
+      G.allowExtra(s);
+      persist();
+      sfx('good');
+      toast('きょう もう1ぴき そだてられるよ！');
+      renderHome();
+    } else {
+      sfx('bad');
+      toast('こたえが ちがうみたい');
+    }
+  };
   el.querySelector<HTMLButtonElement>('#reset')!.onclick = async () => {
     if ((await dialog(`${esc(profile.name)}の ベノムモンスターの データを ぜんぶ けして、さいしょから やりなおす？`, [{ label: 'やめる', value: 'no', primary: true }, { label: 'けす', value: 'yes' }])) !== 'yes') return;
     if ((await dialog('ほんとうに いいの？ もとに もどせないよ。', [{ label: 'やめる', value: 'no', primary: true }, { label: 'ほんとうに けす', value: 'yes' }])) !== 'yes') return;
