@@ -8,9 +8,7 @@ import {
   AREAS,
   BOSSES,
   FOODS,
-  GU_NAMES,
   MED_CARDS,
-  PA_NAMES,
   RARITY,
   SPECIES,
   SPECIES_IDS,
@@ -21,8 +19,9 @@ import {
   type Rarity,
   type StatKey,
 } from './data';
+import { BOSS_MOVES, MOVESETS, SKILLS, handsOk, moveCd, moveKey, type MoveDef, type SkillId } from './moves';
 
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 export const HP_PER_POINT = 3;
 export const BASE_RES = 10; // どくたいせいの はじめの あたい
 export const RES_PER_POINT = 2; // どくたいせいは トレーニング1かいで 2ばい のびる
@@ -46,6 +45,7 @@ export interface Run {
   trained: boolean;
   wins: number;
   bossTries: number; // ボスに まけた かず（まけるほど ボスが すこし よわく なる）
+  moves: MoveDef[]; // いまの わざ 3つ（その日の 1ぴきだけの もの）
   startedAt: number;
 }
 
@@ -75,15 +75,16 @@ export interface Stats {
   maxHp: number;
   atk: number;
   def: number;
-  spd: number;
   res: number;
 }
 
 export interface Move {
   hand: Hand;
   name: string;
+  skill?: SkillId;
+  cd: number; // つかった あと やすむ ターン
   power: number; // グー・チョキの ダメージの つよさ
-  types: PType[]; // チョキの どく
+  types: PType[]; // チョキの どく（パーの「どくのひふ」も これを つかう）
   hits?: number;
   guard?: number; // パー：その ターンに うける ダメージを へらす わりあい（へらした ぶんを はねかえす）
   heal?: number; // パー：HPを かいふくする わりあい
@@ -91,7 +92,7 @@ export interface Move {
 
 const key = (pid: ProfileId) => `venom.${pid}`;
 const rid = () => Math.random().toString(36).slice(2, 10);
-export const emptyBonus = (): Record<StatKey, number> => ({ hp: 0, atk: 0, def: 0, spd: 0, res: 0 });
+export const emptyBonus = (): Record<StatKey, number> => ({ hp: 0, atk: 0, def: 0, res: 0 });
 
 export function today(d = new Date()): string {
   const p = (n: number) => String(n).padStart(2, '0');
@@ -125,7 +126,6 @@ export function statsFor(species: string, level: number, bonus?: Record<StatKey,
     maxHp: Math.round(b.hp * f) + (bonus?.hp ?? 0) * HP_PER_POINT,
     atk: Math.round(b.atk * f) + (bonus?.atk ?? 0),
     def: Math.round(b.def * f) + (bonus?.def ?? 0),
-    spd: Math.round(b.spd * f) + (bonus?.spd ?? 0),
     res: BASE_RES + (bonus?.res ?? 0),
   };
 }
@@ -135,17 +135,57 @@ export const runStats = (r: Run): Stats => statsFor(r.species, r.level, r.bonus)
 // どくたいせい → どくの ききめを へらす わりあい（50で はんぶん、さいだい 75%）
 export const resistFrac = (res: number): number => Math.min(0.75, res / (res + 50));
 
-// ---------------- わざ（グー・チョキ・パー） ----------------
+// ---------------- わざ ----------------
+// わざの つよさ：グーは ダメージ大、チョキは ダメージ小＋どく、パーは まもり（6わり へらして はねかえす＋かいふく）。
+// 2ターン やすむ わざは つよい かわりに はんどうが ある ので、こうげきの わざは すこし ダメージが おおきい。
 const STAGE_PREFIX = ['', '', 'つよい ', 'スーパー '];
-export function movesFor(species: string, stage: number): Record<Hand, Move> {
-  const sp = SPECIES[species];
+const STAGE_MUL = [1, 1, 1.06, 1.12];
+export function buildMove(def: MoveDef, species: string | null, stage: number): Move {
+  const [hand, name, skill] = def;
   const st = Math.max(1, Math.min(3, stage));
-  const pre = STAGE_PREFIX[st];
-  return {
-    gu: { hand: 'gu', name: pre + GU_NAMES[sp.art], power: [0, 1.8, 1.9, 2.0][st], types: [] },
-    choki: { hand: 'choki', name: pre + sp.moveName, power: [0, 1.1, 1.15, 1.2][st], types: [...sp.types] },
-    pa: { hand: 'pa', name: pre + PA_NAMES[sp.art], power: 0, types: [], guard: 0.6, heal: [0, 0.08, 0.1, 0.12][st] },
-  };
+  const cd = moveCd(def);
+  const mul = STAGE_MUL[st] * (cd === 2 && hand !== 'pa' ? 1.1 : 1);
+  const types = species ? [...SPECIES[species].types] : [];
+  const m: Move = { hand, name: STAGE_PREFIX[st] + name, skill, cd, power: 0, types: hand === 'gu' ? [] : types };
+  if (hand === 'gu') m.power = 1.8 * mul;
+  else if (hand === 'choki') m.power = (species ? 1.1 : 1.3) * mul; // ボスの ✌️は どくが ない かわりに すこし つよい
+  else {
+    m.guard = skill === 'fukuramu' ? 0.8 : 0.6;
+    m.heal = [0, 0.08, 0.1, 0.12][st] * (skill === 'fukuramu' ? 2 : 1);
+  }
+  if (skill === 'rensoku') m.hits = 2;
+  return m;
+}
+
+export const startMoves = (species: string): MoveDef[] => MOVESETS[species].start.map((m) => [...m] as MoveDef);
+export const runMoves = (r: Run): Move[] => r.moves.map((m) => buildMove(m, r.species, r.stage));
+export const bossMoves = (bossId: string): Move[] => BOSS_MOVES[bossId].map((m) => buildMove(m, null, 3));
+export const skillText = (m: MoveDef | Move): string => {
+  const sk = Array.isArray(m) ? m[2] : m.skill;
+  return sk ? `〔${SKILLS[sk].name}〕` : '';
+};
+
+// ---------------- わざを ひらめく ----------------
+// トレーニングの あと 30%、やせいバトルに かった あと 40%。まだ もっていない わざから 1つ。
+export const LEARN_CHANCE = { train: 0.3, win: 0.4 };
+export function rollInspiration(r: Run, chance: number): MoveDef | null {
+  if (Math.random() >= chance) return null;
+  const have = new Set(r.moves.map(moveKey));
+  const set = MOVESETS[r.species];
+  const pool = [...set.learn, ...set.start].filter((m) => !have.has(moveKey(m)));
+  // おなじ 手が 3つに なる わざしか ない ときも、いれかえ できる ものだけ
+  const usable = pool.filter((m) => r.moves.some((_, i) => canReplace(r, i, m)));
+  if (!usable.length) return null;
+  return [...usable[Math.floor(Math.random() * usable.length)]] as MoveDef;
+}
+export function canReplace(r: Run, idx: number, def: MoveDef): boolean {
+  const next = r.moves.map((m, i) => (i === idx ? def : m));
+  return handsOk(next);
+}
+export function replaceMove(r: Run, idx: number, def: MoveDef): boolean {
+  if (!canReplace(r, idx, def)) return false;
+  r.moves[idx] = [...def] as MoveDef;
+  return true;
 }
 
 // ---------------- ロード・セーブ（版の移行つき） ----------------
@@ -199,7 +239,14 @@ function migrate3to4(d: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-const MIGRATIONS: Record<number, (d: Record<string, unknown>) => Record<string, unknown>> = { 1: migrate1to2, 2: migrate2to3, 3: migrate3to4 };
+// v5：わざ 3つ（いま そだてて いる こは さいしょの わざに する）・はやさを なくす
+function migrate4to5(d: Record<string, unknown>): Record<string, unknown> {
+  const run = d.run as Run | null | undefined;
+  if (run && SPECIES[run.species]) run.moves = startMoves(run.species);
+  return { ...d, v: 5, run: run ?? null };
+}
+
+const MIGRATIONS: Record<number, (d: Record<string, unknown>) => Record<string, unknown>> = { 1: migrate1to2, 2: migrate2to3, 3: migrate3to4, 4: migrate4to5 };
 
 export type LoadResult = { ok: true; save: VenomSave } | { ok: false; reason: 'newer' };
 
@@ -217,7 +264,9 @@ export function loadGame(pid: ProfileId): LoadResult {
   s.hall = (s.hall ?? []).filter((h) => h && SPECIES[h.species]);
   if (s.run && !SPECIES[s.run.species]) s.run = null;
   if (s.run) {
-    s.run.bonus = { ...emptyBonus(), ...s.run.bonus };
+    const b: Partial<Record<string, number>> = s.run.bonus ?? {};
+    s.run.bonus = { hp: b.hp ?? 0, atk: b.atk ?? 0, def: b.def ?? 0, res: b.res ?? 0 };
+    if (!Array.isArray(s.run.moves) || s.run.moves.length !== 3 || !handsOk(s.run.moves)) s.run.moves = startMoves(s.run.species);
     s.run.hp = Math.max(1, Math.min(s.run.hp, runStats(s.run).maxHp));
   }
   return { ok: true, save: s };
@@ -263,6 +312,7 @@ export function startRun(s: VenomSave): { run: Run; rarity: Rarity; isNew: boole
     trained: false,
     wins: 0,
     bossTries: 0,
+    moves: startMoves(species),
     startedAt: Date.now(),
   };
   s.run = run;
@@ -365,12 +415,11 @@ export function bossFor(s: VenomSave): number {
 export function bossStats(r: Run, bossIndex: number): Stats {
   const b = BOSSES[bossIndex];
   const p = runStats(r);
-  const ease = Math.pow(0.85, r.bossTries); // まけるたびに すこし よわく なる
+  const ease = Math.pow(0.7, r.bossTries); // まけるたびに すこし よわく なる
   return {
     maxHp: Math.round(p.maxHp * b.scale.hp * ease),
     atk: Math.round(p.atk * b.scale.atk * (0.5 + 0.5 * ease)),
     def: Math.round(p.def * b.scale.def),
-    spd: Math.round(p.spd * b.scale.spd),
     res: 0,
   };
 }

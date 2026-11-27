@@ -48,16 +48,15 @@ export const PTYPES: Record<PType, PTypeInfo> = {
   },
 };
 
-// ---------------- 強さ（5つ） ----------------
-// はやさ・どくたいせいは トレーニングで だけ のびる（ごはんでは のびない）
-export type StatKey = 'hp' | 'atk' | 'def' | 'spd' | 'res';
+// ---------------- 強さ（4つ） ----------------
+// どくたいせいは トレーニングで だけ のびる（ごはんでは のびない）。はやさは ない（さきこうは じゃんけんで きまる）
+export type StatKey = 'hp' | 'atk' | 'def' | 'res';
 export type FoodStat = 'hp' | 'atk' | 'def';
-export const STAT_KEYS: StatKey[] = ['hp', 'atk', 'def', 'spd', 'res'];
+export const STAT_KEYS: StatKey[] = ['hp', 'atk', 'def', 'res'];
 export const STAT_INFO: Record<StatKey, { name: string; icon: string; color: string }> = {
   hp: { name: 'たいりょく', icon: '❤️', color: '#ff6b6b' },
   atk: { name: 'こうげき', icon: '⚔️', color: '#ffa94d' },
   def: { name: 'ぼうぎょ', icon: '🛡️', color: '#4dabf7' },
-  spd: { name: 'はやさ', icon: '💨', color: '#38d9a9' },
   res: { name: 'どくたいせい', icon: '💊', color: '#b197fc' },
 };
 
@@ -149,29 +148,6 @@ export interface Species {
   truth?: string;
   poisonFromFood?: boolean;
   glow?: boolean;
-}
-
-// 体の かたちごとの グー（はやい こうげき）と パー（まもり）の わざ。チョキは その いきものの どくわざ（moveName）。
-// パーは ほんとうに する まもりかたを えらんでいる（例：ヒキガエルは からだを ふくらませる、スローロリスは うでを あたまに あげる）。
-export const GU_NAMES: Record<ArtKind, string> = {
-  scorpion: 'はさみパンチ', spider: 'とびかかり', hornet: 'かみつき', bee: 'たいあたり', frog: 'ジャンプアタック', toad: 'のしかかり',
-  coil: 'すばやい かみつき', cobra: 'すばやい かみつき', centipede: 'かみつき', caterpillar: 'ずつき', octopus: 'からみつき',
-  stonefish: 'まるのみアタック', lionfish: 'ひれアタック', puffer: 'かたい はで かむ', jelly: 'しょくしゅムチ', cone: 'からで ぶつかる',
-  ray: 'しっぽムチ', lizard: 'かみつき', newt: 'たいあたり', platypus: 'くちばしアタック', loris: 'パンチ', seasnake: 'かみつき',
-};
-export const PA_NAMES: Record<ArtKind, string> = {
-  scorpion: 'はさみで ガード', spider: 'すに かくれる', hornet: 'すばやく よける', bee: 'なかまと まもる', frog: 'ぴょんと よける',
-  toad: 'からだを ふくらませる', coil: 'とぐろを まく', cobra: 'フードを ひろげる', centipede: 'まるくなる', caterpillar: 'とげで まもる',
-  octopus: 'すみを はく', stonefish: 'いしに なりきる', lionfish: 'ひれを ひろげる', puffer: 'ぷくっと ふくらむ', jelly: 'ふわふわ ただよう',
-  cone: 'からに こもる', ray: 'すなに もぐる', lizard: 'かたい うろこで まもる', newt: 'あかい おなかを みせる', platypus: 'みずに もぐる',
-  loris: 'うでを あたまに あげる', seasnake: 'いわかげに かくれる',
-};
-
-// その いきものの「くせ」（よく だす 手）。ぼうぎょが たかい → パー、すばやい → グー、それ いがい → チョキ
-export function favoriteHand(sp: Species): Hand {
-  if (sp.base.def >= sp.base.atk * 0.8) return 'pa';
-  if (sp.base.spd >= 22) return 'gu';
-  return 'choki';
 }
 
 const KIDS: [string, string, string] = ['あかちゃん', 'こども', 'おとな'];
@@ -524,22 +500,13 @@ export const AREAS: Area[] = [
 // 1かいの プレイの さいごに 1たい。つよさは その日に そだてた いきものに あわせて きまる（scale は その こに たいする ばいりつ）。
 export type BossId = 'hebikui' | 'mongoose' | 'mitsuanaguma';
 
-export interface BossMove {
-  hand: Hand;
-  name: string;
-  power: number;
-  hits?: number;
-}
-
 export interface Boss {
   id: BossId;
   name: string;
   where: string;
   fact: string;
   resist: Partial<Record<PType, number>>;
-  scale: { hp: number; atk: number; def: number; spd: number };
-  fav: Hand;
-  moves: Record<Hand, BossMove>;
+  scale: { hp: number; atk: number; def: number };
   hint: string;
   bg: string;
 }
@@ -551,14 +518,8 @@ export const BOSSES: Boss[] = [
     where: 'アフリカの {草原|そうげん}',
     fact: '{長|なが}い あしで どくヘビを けって たおす {鳥|とり}。ける ちからは とても つよい。',
     resist: {},
-    scale: { hp: 1.4, atk: 0.75, def: 0.9, spd: 1.2 },
-    fav: 'pa',
-    moves: {
-      gu: { hand: 'gu', name: 'キック', power: 1.8 },
-      choki: { hand: 'choki', name: 'れんぞくキック', power: 0.8, hits: 2 },
-      pa: { hand: 'pa', name: 'はねで ガード', power: 0 },
-    },
-    hint: 'ヘビクイワシは 🖐️パー（はねで ガード）を よく だす。✌️チョキの どくで すりぬけよう！',
+    scale: { hp: 1.1, atk: 0.7, def: 0.9 },
+    hint: 'ヘビクイワシの ✊キックは 🖐️パーの まもりを やぶる！ キックが やすみの あいだに せめよう。',
     bg: 'linear-gradient(#ffe8a3,#e9c46a 55%,#b5893b)',
   },
   {
@@ -566,15 +527,9 @@ export const BOSSES: Boss[] = [
     name: 'マングース',
     where: 'アジアや アフリカ',
     fact: 'ヘビの しびれどく（{神経毒|しんけいどく}）が ききにくい からだを もっている。すばやく うごいて ヘビと たたかう。',
-    resist: { shibire: 0.25 },
-    scale: { hp: 1.2, atk: 0.7, def: 1.0, spd: 1.3 },
-    fav: 'choki',
-    moves: {
-      gu: { hand: 'gu', name: 'かみつく', power: 1.8 },
-      choki: { hand: 'choki', name: 'すばやい かみつき', power: 0.8, hits: 2 },
-      pa: { hand: 'pa', name: 'さっと よける', power: 0 },
-    },
-    hint: 'マングースは ✌️チョキが すき。✊グーで さきに こうげき しよう！ しびれどくは ききにくいよ。',
+    resist: { shibire: 0.5 },
+    scale: { hp: 1.0, atk: 0.68, def: 1.0 },
+    hint: 'マングースには しびれどくが ききにくい！ ちのどく・いたみどく・こわしどくの わざで たたかおう。',
     bg: 'linear-gradient(#d8f3a5,#9ccc65 55%,#5b8c2a)',
   },
   {
@@ -582,15 +537,9 @@ export const BOSSES: Boss[] = [
     name: 'ラーテル',
     where: 'アフリカや アジア',
     fact: 'べつの なまえは ミツアナグマ。コブラの どくにも つよく、かわが とても ぶあつい。ハチの {巣|す}も へいきで おそう。',
-    resist: { shibire: 0.25 },
-    scale: { hp: 1.25, atk: 0.72, def: 1.0, spd: 0.8 },
-    fav: 'gu',
-    moves: {
-      gu: { hand: 'gu', name: 'のしかかり', power: 2.0 },
-      choki: { hand: 'choki', name: 'ひっかく', power: 0.9, hits: 2 },
-      pa: { hand: 'pa', name: 'ぶあつい かわ', power: 0 },
-    },
-    hint: 'ラーテルは ✊グー（のしかかり）が すき。🖐️パーで うけとめて はねかえそう！ コブラの しびれどくは ききにくいよ。',
+    resist: { shibire: 0.5 },
+    scale: { hp: 0.95, atk: 0.62, def: 0.95 },
+    hint: 'ラーテルの 🖐️ぶあつい かわには ✌️チョキが きく！ コブラの しびれどくは ききにくいよ。',
     bg: 'linear-gradient(#f6d6a8,#d4a373 55%,#8d5a2b)',
   },
 ];

@@ -9,7 +9,6 @@ import {
   BOSSES,
   FOODS,
   HANDS,
-  HAND_IDS,
   MED_CARDS,
   PTYPES,
   PTYPE_IDS,
@@ -24,8 +23,9 @@ import {
   type StatKey,
 } from './data';
 import { bossSvg, creatureSvg, eggSvg } from './art';
+import { MOVESETS, SKILLS, type MoveDef } from './moves';
 import * as G from './state';
-import { Duel, bossFighter, markLabels, playerFighter, wildFighter, type BattleEvent, type Fighter, type Side } from './battle';
+import { Duel, available, bossFighter, markLabels, playerFighter, wildFighter, type BattleEvent, type Fighter, type Side } from './battle';
 
 const css = document.createElement('style');
 css.textContent = PROFILE_CSS + COMMON_CSS;
@@ -77,7 +77,6 @@ function modal(inner: string): { el: HTMLElement; close: () => void } {
 
 // 完成体の 絵（おとなの 絵に きんいろの ひかり）
 const kanseiArt = (id: string, flip = false) => `<div class="kansei">${creatureSvg(id, 3, flip)}</div>`;
-const handLabel = (h: Hand) => `${HANDS[h].icon}${HANDS[h].name}`;
 
 function topbar(back?: string): string {
   return `<header class="topbar">
@@ -165,7 +164,7 @@ function statCard(k: StatKey, r: G.Run): string {
   // どくたいせいの バーは「どくの ききめを どれだけ へらせるか」（さいだい 75%）
   const bar = k === 'res' ? (G.resistFrac(v) / 0.75) * 100 : Math.min(100, v);
   const note = k === 'res' ? `どくの ききめ −${Math.round(G.resistFrac(v) * 100)}%・` : '';
-  return `<div class="scard ${k === 'spd' || k === 'res' ? 'wide' : ''}" style="--sc:${info.color}"><div class="sname">${info.icon} ${info.name}</div>
+  return `<div class="scard ${k === 'res' ? 'wide' : ''}" style="--sc:${info.color}"><div class="sname">${info.icon} ${info.name}</div>
     <div class="sval">${v}</div><div class="sbar"><div style="width:${bar}%;background:${info.color}"></div></div>
     <div class="sbonus">${note}そだてて +${bonus}</div></div>`;
 }
@@ -175,6 +174,23 @@ function stageBar(r: G.Run): string {
   return `<div class="stagebar">${steps
     .map((n, i) => `<span class="${i + 1 < r.stage ? 'done' : i + 1 === r.stage ? 'now' : ''}">${n}</span>`)
     .join('<b>›</b>')}</div>`;
+}
+
+// わざの カード（ホーム・ひらめき・ずかんで つかう）
+function moveCard(m: G.Move, attrs = ''): string {
+  const sk = m.skill ? SKILLS[m.skill] : null;
+  return `<button class="mchip h-${m.hand}" ${attrs}><span class="mi">${HANDS[m.hand].icon}</span><b>${esc(m.name)}</b>
+    <small>${sk ? `〔${sk.name}〕` : 'ふつう'}・${m.cd ? `やすみ ${m.cd}` : 'やすみ なし'}</small></button>`;
+}
+const moveChips = (r: G.Run) => G.runMoves(r).map((m, i) => moveCard(m, `data-mv="${i}"`)).join('');
+function moveHelp(m: G.Move): string {
+  const sk = m.skill ? SKILLS[m.skill] : null;
+  const base = { gu: 'はやい こうげき（ダメージ 大）', choki: 'どく（ダメージ 小＋どくの こうか）', pa: 'まもり（うけとめて はねかえす＋かいふく）' }[m.hand];
+  return `${HANDS[m.hand].icon}${m.name}：${base}${sk ? `<br>〔${sk.name}〕${sk.desc}` : ''}<br>つかったら ${m.cd ? `${m.cd}ターン やすみ` : 'やすまず つかえる'}`;
+}
+function bindMoveChips(el: HTMLElement, r: G.Run): void {
+  const ms = G.runMoves(r);
+  el.querySelectorAll<HTMLButtonElement>('.mymoves [data-mv]').forEach((b) => (b.onclick = () => toast(rb(moveHelp(ms[Number(b.dataset.mv)])), 4000)));
 }
 
 function bubbleText(r: G.Run): string {
@@ -210,6 +226,8 @@ function renderHome(): void {
         ${M('train', '🏋️', 'トレーニング', r.trained)}
         ${M('battle', '⚔️', 'やせいバトル', r.wins >= G.WINS_PER_STAGE, `${'●'.repeat(r.wins)}${'○'.repeat(G.WINS_PER_STAGE - r.wins)}`)}
       </div>
+      <div class="mtitle">わざ（タップで せつめい）</div>
+      <div class="mymoves">${moveChips(r)}</div>
       ${
         r.stage === 3
           ? `<button class="bossbtn ${next === 'boss' ? 'ready' : ''}" id="boss" ${next === 'boss' ? '' : 'disabled'}>
@@ -238,6 +256,7 @@ function renderHome(): void {
   });
   const bb = el.querySelector<HTMLButtonElement>('#boss');
   if (bb) bb.onclick = () => startBoss(r);
+  bindMoveChips(el, r);
   show('s-home');
 }
 
@@ -294,12 +313,12 @@ function openFeed(r: G.Run): void {
 }
 
 // ======================= トレーニング =======================
-const TRAIN_HINT: Partial<Record<StatKey, string>> = { spd: 'さきに うごく', res: 'どくに つよく' };
+const TRAIN_HINT: Partial<Record<StatKey, string>> = { res: 'どくに つよく' };
 
 function openTraining(r: G.Run): void {
   sfx('click');
   const st = G.runStats(r);
-  const cur: Record<StatKey, number> = { hp: st.maxHp, atk: st.atk, def: st.def, spd: st.spd, res: st.res };
+  const cur: Record<StatKey, number> = { hp: st.maxHp, atk: st.atk, def: st.def, res: st.res };
   const m = modal(rb(`<div class="dlg-body"><h3 style="margin:0 0 12px">なにを きたえる？（1かいだけ）</h3>
     <div class="statpick">${STAT_KEYS.map((k) => `<button class="btn" data-stat="${k}">${STAT_INFO[k].icon} ${STAT_INFO[k].name}<br><small>いま ${cur[k]}${TRAIN_HINT[k] ? `・${TRAIN_HINT[k]}` : ''}</small></button>`).join('')}</div></div>
     <div class="dlg-btns"><button class="btn" data-x>やめる</button></div>`));
@@ -357,6 +376,7 @@ function runTiming(r: G.Run, stat: StatKey, m: { el: HTMLElement; close: () => v
       res.innerHTML = rb(`${STAT_INFO[stat].icon} ${STAT_INFO[stat].name}が <b>+${gain}</b> あがった！`);
       await wait(1400);
       m.close();
+      await maybeInspire(r, G.LEARN_CHANCE.train);
       renderHome();
       return;
     }
@@ -464,7 +484,7 @@ function startBoss(r: G.Run): void {
 
 
 function fighterCard(u: Fighter, art: string): string {
-  const habit = u.side === 'e' ? `<div class="habit">くせ：${handLabel(u.fav)}を よく だす</div>` : '';
+  const habit = u.side === 'e' ? `<div class="habit">わざ：<span class="fmoves"></span></div>` : '';
   return `<div class="unit ${u.side}" data-side="${u.side}">
     <div class="uhp"><div class="unm"><span>${u.name}</span><span>Lv${u.level}</span></div>
       <div class="track"><div class="fill"></div></div>
@@ -503,6 +523,11 @@ function runDuel(r: G.Run, duel: Duel, bossIndex: number | null): void {
       ue.querySelector<HTMLElement>('.uhpn')!.textContent = `${u.hp}/${u.maxHp}`;
       ue.querySelector<HTMLElement>('.marks')!.innerHTML = markLabels(u).map(([l, c]) => `<span style="background:${c}">${l}</span>`).join('');
       ue.classList.toggle('ko', u.hp <= 0);
+      const fm = ue.querySelector<HTMLElement>('.fmoves');
+      if (fm)
+        fm.innerHTML = u.moves
+          .map((m, i) => `<span class="fm h-${m.hand} ${u.cooldown[i] > 0 ? 'rest' : ''}" title="${esc(m.name)}">${HANDS[m.hand].icon}${u.cooldown[i] > 0 ? `<i>⏳${u.cooldown[i]}</i>` : ''}</span>`)
+          .join('');
     }
   };
   const floatText = (side: Side, text: string, cls: string) => {
@@ -518,18 +543,19 @@ function runDuel(r: G.Run, duel: Duel, bossIndex: number | null): void {
   let busy = false;
   const menu = () => {
     busy = false;
-    msg.innerHTML = rb(`どの 手を だす？　<small>（${handLabel(duel.foe.fav)}が すきな あいてだよ）</small>`);
+    const foeAv = available(duel.foe).map((i) => HANDS[duel.foe.moves[i].hand].icon).join('');
+    msg.innerHTML = rb(`どの わざを だす？　<small>（あいてが いま だせる 手：${foeAv}）</small>`);
     cmd.innerHTML = rb(
-      HAND_IDS.map((h) => {
-        const m = duel.me.moves[h];
-        return `<button class="hand h-${h}" data-hand="${h}"><span class="hi">${HANDS[h].icon}</span><b>${HANDS[h].name}</b><span class="hn">${esc(m.name)}</span><small>${HANDS[h].role}・${HANDS[HANDS[h].beats].icon}に かつ</small></button>`;
+      duel.me.moves.map((m, i) => {
+        const cd = duel.me.cooldown[i];
+        return `<button class="hand h-${m.hand}" data-mv="${i}" ${cd > 0 ? 'disabled' : ''}><span class="hi">${HANDS[m.hand].icon}</span><span class="hn">${esc(m.name)}</span><small>${m.skill ? `〔${SKILLS[m.skill].name}〕` : HANDS[m.hand].role}${m.cd ? `・やすみ${m.cd}` : ''}</small>${cd > 0 ? `<span class="cdbadge">⏳${cd}</span>` : ''}</button>`;
       }).join('') + `<button class="bmove run" data-run>🏃 にげる</button>`,
     );
-    cmd.querySelectorAll<HTMLButtonElement>('[data-hand]').forEach((b) => (b.onclick = () => void choose(b.dataset.hand as Hand)));
+    cmd.querySelectorAll<HTMLButtonElement>('[data-mv]').forEach((b) => (b.onclick = () => void choose(Number(b.dataset.mv))));
     cmd.querySelector<HTMLButtonElement>('[data-run]')!.onclick = () => void runAway();
   };
-  const choose = async (h: Hand) => {
-    if (busy || duel.over) return;
+  const choose = async (h: number) => {
+    if (busy || duel.over || !available(duel.me).includes(h)) return;
     busy = true;
     sfx('click');
     cmd.innerHTML = '';
@@ -537,13 +563,13 @@ function runDuel(r: G.Run, duel: Duel, bossIndex: number | null): void {
     if (!duel.over) menu();
   };
   const keys = (e: KeyboardEvent) => {
-    const map: Record<string, Hand> = { Digit1: 'gu', Digit2: 'choki', Digit3: 'pa', Numpad1: 'gu', Numpad2: 'choki', Numpad3: 'pa' };
-    if (map[e.code] && !busy && scr('s-battle').classList.contains('on')) void choose(map[e.code]);
+    const map: Record<string, number> = { Digit1: 0, Digit2: 1, Digit3: 2, Numpad1: 0, Numpad2: 1, Numpad3: 2 };
+    if (map[e.code] != null && !busy && scr('s-battle').classList.contains('on')) void choose(map[e.code]);
   };
   document.addEventListener('keydown', keys);
   const cleanup = () => document.removeEventListener('keydown', keys);
   const showJanken = async (me: Hand, foe: Hand, result: 'win' | 'lose' | 'draw', first: Side) => {
-    const word = result === 'win' ? 'かち！ さきに こうげき！' : result === 'lose' ? 'まけ… あいてが さきに こうげき' : `あいこ！ ${first === 'p' ? 'はやさで かって さきに こうげき！' : 'あいてが はやくて さきに こうげき'}`;
+    const word = result === 'win' ? 'かち！ さきに こうげき！' : result === 'lose' ? 'まけ… あいてが さきに こうげき' : `あいこ！ ${first === 'p' ? 'こっちが さきに こうげき！' : 'あいてが さきに こうげき'}`;
     jk.innerHTML = rb(`<div class="jk-row"><span class="jk-h">${HANDS[me].icon}</span><span class="jk-vs">VS</span><span class="jk-h">${HANDS[foe].icon}</span></div><div class="jk-res ${result}">${word}</div>`);
     jk.classList.add('on');
     sfx(result === 'win' ? 'good' : result === 'lose' ? 'bad' : 'pop');
@@ -617,6 +643,7 @@ function runDuel(r: G.Run, duel: Duel, bossIndex: number | null): void {
       const up = G.winWild(s, r, duel.foe.species!);
       persist();
       await dialog(`<b>🎉 かった！</b><br>レベル ${up.from} → <b>${up.to}</b>　（バトル ${r.wins} / ${G.WINS_PER_STAGE}）`, [{ label: 'OK', value: 'ok', primary: true }]);
+      await maybeInspire(r, G.LEARN_CHANCE.win);
       await maybeGrow(r);
     } else {
       sfx('lose');
@@ -631,6 +658,42 @@ function runDuel(r: G.Run, duel: Duel, bossIndex: number | null): void {
   setTimeout(menu, 900);
 }
 
+// わざを ひらめく（トレーニングの あと・やせいバトルに かった あと）
+async function maybeInspire(r: G.Run, chance: number): Promise<void> {
+  const def = G.rollInspiration(r, chance);
+  if (!def) return;
+  sfx('levelup');
+  const nm = G.buildMove(def, r.species, r.stage);
+  const cur = G.runMoves(r);
+  await new Promise<void>((resolve) => {
+    const m = modal(
+      rb(`<div class="dlg-body" style="text-align:center"><h3 style="margin:0 0 8px">💡 ${SPECIES[r.species].name}は あたらしい わざを ひらめいた！</h3>
+      <div class="mymoves one">${moveCard(nm)}</div>
+      <div class="factbox" style="text-align:left">${moveHelp(nm)}</div>
+      <div style="margin-top:8px">どの わざと いれかえる？ <small>（おなじ 手は 2つまで）</small></div>
+      <div class="mymoves pick">${cur.map((c, i) => moveCard(c, `data-rep="${i}" ${G.canReplace(r, i, def) ? '' : 'disabled'}`)).join('')}</div></div>
+      <div class="dlg-btns"><button class="btn" data-keep>いまの まま</button></div>`),
+    );
+    m.el.querySelector<HTMLButtonElement>('[data-keep]')!.onclick = () => {
+      sfx('click');
+      m.close();
+      resolve();
+    };
+    m.el.querySelectorAll<HTMLButtonElement>('[data-rep]').forEach((b) => {
+      b.onclick = () => {
+        const i = Number(b.dataset.rep);
+        const old = cur[i].name;
+        if (!G.replaceMove(r, i, def)) return;
+        persist();
+        sfx('good');
+        m.close();
+        toast(rb(`${old}を わすれて、${HANDS[nm.hand].icon}${nm.name}を おぼえた！`), 3000);
+        resolve();
+      };
+    });
+  });
+}
+
 // やることが ぜんぶ おわったら つぎの すがたへ
 async function maybeGrow(r: G.Run): Promise<void> {
   if (r.stage < 3 && G.stageDone(r)) {
@@ -638,12 +701,12 @@ async function maybeGrow(r: G.Run): Promise<void> {
     persist();
     sfx('levelup');
     const sp = SPECIES[r.species];
-    const mv = G.movesFor(r.species, r.stage);
+    const mv = G.runMoves(r);
     await dialog(
       `<div style="width:170px;height:170px;margin:auto">${creatureSvg(r.species, r.stage)}</div>
       ✨ <b>${sp.name}が ${sp.stageNames[r.stage - 1]}に せいちょうした！</b>（Lv ${r.level}）
       <div class="factbox">📖 まめちしき：${sp.facts[r.stage - 1]}</div>
-      わざが つよく なった！ ${HAND_IDS.map((h) => `${HANDS[h].icon}${mv[h].name}`).join('　')}`,
+      わざが つよく なった！ ${mv.map((m) => `${HANDS[m.hand].icon}${m.name}`).join('　')}`,
       [{ label: 'やったね！', value: 'ok', primary: true }],
     );
   } else if (r.stage === 3 && G.stageDone(r)) {
@@ -709,7 +772,7 @@ function renderZukan(): void {
   } else if (zTab === 'boss') {
     body = `<div class="cards">${BOSSES.map((b) => {
       const ok = s.bossBeaten.includes(b.id);
-      return `<div class="card ${ok ? '' : 'locked'}" style="width:280px"><div class="pic">${bossSvg(b.id)}</div><div class="ttl">${ok ? b.name : '？？？'}</div><div class="sub">${ok ? `${b.where}<br>${b.fact}<br>くせ：${handLabel(b.fav)}` : 'たおすと わかるよ'}</div></div>`;
+      return `<div class="card ${ok ? '' : 'locked'}" style="width:280px"><div class="pic">${bossSvg(b.id)}</div><div class="ttl">${ok ? b.name : '？？？'}</div><div class="sub">${ok ? `${b.where}<br>${b.fact}<br>わざ：${G.bossMoves(b.id).map((m) => `${HANDS[m.hand].icon}${m.name}${G.skillText(m)}`).join('・')}` : 'たおすと わかるよ'}</div></div>`;
     }).join('')}</div>`;
   } else {
     body = `<div class="hint" style="font-size:17px">どくは つかいかたしだいで くすりにも なる！ かんけいする いきものを かんせいたいに すると てに はいるよ。</div><div class="cards">${MED_CARDS.map((m) => {
@@ -746,7 +809,8 @@ function openSpecies(id: string): void {
   const done = s.hall.some((h) => h.species === id);
   const stg = own ? Math.max(1, s.factsSeen[id] ?? 1) : 0;
   const facts = sp.facts.map((f, i) => (i < stg ? `<div class="fact">📖 ${f}</div>` : `<div class="fact" style="opacity:.6">？ ${own ? 'もっと そだてると わかるよ' : 'そだてると わかるよ'}</div>`)).join('');
-  const mv = G.movesFor(id, 3);
+  const set = MOVESETS[id];
+  const ml = (ms: MoveDef[]) => ms.map((m) => `${HANDS[m[0]].icon}${m[1]}${G.skillText(m)}`).join('・');
   const m = modal(rb(`<div class="zk-detail">
     <div class="bigpic">${done ? kanseiArt(id) : creatureSvg(id, Math.max(1, stg || 3))}</div>
     <div class="zk-text">
@@ -754,7 +818,7 @@ function openSpecies(id: string): void {
       🏠 すむところ：${sp.where}<br>📏 おおきさ：${sp.size}<br>
       🍽️ たべもの：${sp.foods.map((f) => FOODS[f].emoji + FOODS[f].name).join('、')}<br>
       🧪 どく：${sp.types.map((t) => PTYPES[t].icon + PTYPES[t].name).join('、')}<br>
-      🎮 わざ：${HAND_IDS.map((h) => `${HANDS[h].icon}${mv[h].name.replace('スーパー ', '')}`).join('　')}<br>
+      🎮 さいしょの わざ：${ml(set.start)}<br>💡 ひらめく わざ：${ml(set.learn)}<br>
       ${facts}
       ${sp.truth && own ? `<div class="truth">🔎 ほんとうは… ${sp.truth}</div>` : ''}
       <div class="safe">⚠️ ほんものを {見|み}つけても ぜったいに さわらないで、おとなに しらせてね！</div>

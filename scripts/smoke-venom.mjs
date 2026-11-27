@@ -46,11 +46,16 @@ export default async function ({ page, shot, click, root }) {
   // バトルを さいごまで（手は じゅんばんに）
   const fight = async (label) => {
     let shotJk = false;
+    let shotCd = false;
     for (let t = 0; t < 200; t++) {
       if (await dlg.count()) break;
-      const h = page.locator('#cmd [data-hand]');
+      if (!shotCd && (await page.locator('#cmd [data-mv][disabled]').count())) {
+        shotCd = true;
+        await shot(`${label}-cooldown`);
+      }
+      const h = page.locator('#cmd [data-mv]:not([disabled])');
       if (await h.count()) {
-        await h.nth(t % 3).click();
+        await h.nth(t % (await h.count())).click();
         if (!shotJk) {
           await page.waitForTimeout(350);
           await shot(`${label}-janken`);
@@ -93,13 +98,24 @@ export default async function ({ page, shot, click, root }) {
   // トレーニング
   await click('[data-act="train"]');
   await shot('06-train-pick');
-  await click('[data-stat="spd"]');
+  await click('[data-stat="res"]');
+  // ひらめきを かならず おこす（さいごの ストップの あとだけ）
   for (let i = 0; i < 3; i++) {
     await page.waitForTimeout(400);
+    if (i === 2) await page.evaluate(() => { window.__rnd = Math.random; Math.random = () => 0.01; });
     await click('#tstop');
     await page.waitForTimeout(800);
   }
   await page.waitForTimeout(1800);
+  await page.evaluate(() => { Math.random = window.__rnd; });
+  const before = (await save()).run.moves.map((m) => m[1]).join(',');
+  await page.locator('.dlg-back [data-rep]').first().waitFor({ timeout: 5000 });
+  await shot('06c-inspire');
+  await click('.dlg-back [data-rep]:not([disabled])');
+  await page.waitForTimeout(500);
+  const after = (await save()).run.moves.map((m) => m[1]).join(',');
+  if (before === after) throw new Error('わざの いれかえが できていない');
+  await shot('06d-home-moves');
   // やせいバトル（2かい かつと こどもに なる）
   let wins = 0;
   for (let i = 0; i < 8 && (await save()).run.stage === 1; i++) {
@@ -172,8 +188,18 @@ export default async function ({ page, shot, click, root }) {
   });
   await reopen();
   const s3 = await save();
-  if (s3.v !== 4 || s3.hall.length !== 1 || s3.hall[0].species !== 'cobra') throw new Error('v3 → v4 の いこうが おかしい: ' + JSON.stringify(s3).slice(0, 200));
+  if (s3.v !== 5 || s3.hall.length !== 1 || s3.hall[0].species !== 'cobra') throw new Error('v3 → v4 の いこうが おかしい: ' + JSON.stringify(s3).slice(0, 200));
   await shot('16-migrated');
+  // v4（とちゅうの 1ぴき・わざ なし）→ v5
+  await editSave((s) => {
+    s.v = 4;
+    s.run = { uid: 'r', species: 'mamba', stage: 2, level: 7, hp: 30, bonus: { hp: 1, atk: 1, def: 1, spd: 2, res: 0 }, fed: true, trained: false, wins: 1, bossTries: 0, startedAt: 0 };
+    s.lastDone = null;
+  });
+  await reopen();
+  const s4 = await save();
+  if (s4.v !== 5 || !s4.run || s4.run.moves.length !== 3 || 'spd' in s4.run.bonus) throw new Error('v4 → v5 の いこうが おかしい: ' + JSON.stringify(s4.run));
+  await shot('16b-migrated-run');
   await click('[data-go="zukan"]');
   await shot('17-zukan');
 }

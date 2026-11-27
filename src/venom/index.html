@@ -272,6 +272,25 @@ rt{font-size:.5em}
 .jk-res{font-size:26px;font-weight:900;margin-top:4px}
 .jk-res.win{color:#8ce99a}.jk-res.lose{color:#ff8787}.jk-res.draw{color:#ffe066}
 .dmg.heal{color:#d3f9d8;-webkit-text-stroke:2px #2b8a3e}
+
+/* わざ（3つ）・やすみ */
+.mymoves{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.mymoves.one{grid-template-columns:minmax(0,260px);justify-content:center}
+.mymoves.pick{margin-top:6px}
+.mchip{display:flex;flex-direction:column;align-items:center;gap:1px;padding:6px 6px 5px;border-radius:14px;border:none;background:#fff;color:#2b2150;box-shadow:0 4px 0 #b9add9;cursor:pointer;min-width:0;font-family:inherit}
+.mchip .mi{font-size:26px;line-height:1.1}
+.mchip b{font-size:15px;line-height:1.2;text-align:center}
+.mchip small{font-size:11px;color:#6b5fa0;text-align:center}
+.mchip.h-gu{background:#fff0f0}.mchip.h-choki{background:#f8f0fc}.mchip.h-pa{background:#e7f5ff}
+.mchip:disabled{opacity:.35;cursor:not-allowed}
+.mymoves.pick .mchip:not(:disabled):hover{outline:3px solid var(--accent)}
+.hand{position:relative}
+.hand:disabled{opacity:.4;cursor:not-allowed;filter:grayscale(.6)}
+.cdbadge{position:absolute;top:4px;right:6px;background:#2b2150;color:#fff;font-size:13px;font-weight:900;border-radius:999px;padding:1px 7px}
+.fmoves{display:inline-flex;gap:4px;vertical-align:middle}
+.fm{display:inline-flex;align-items:center;gap:1px;font-size:18px;background:rgba(255,255,255,.18);border-radius:8px;padding:0 4px}
+.fm.rest{opacity:.45}
+.fm i{font-style:normal;font-size:11px;color:#ffe066}
 /* バトル（1たい1） */
 #s-battle .arena.duel{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;padding:14px 18px;gap:6px}
 .duel .side{display:flex;justify-content:center;min-height:0}

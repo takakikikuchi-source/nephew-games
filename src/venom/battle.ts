@@ -1,21 +1,23 @@
 // じゃんけんバトル（1たい1）
-// まいターン、じぶんと あいてが どうじに 手（わざ）を えらぶ。じゃんけんに かった ほうが さきに わざを だし、
-// まけた ほうも たおれていなければ あとから わざを だす（はんげき）。あいこは はやさが はやい ほうが さき。
+// まいターン、じぶんと あいてが どうじに わざを 1つ えらぶ。わざに ついた 手（✊✌️🖐️）で じゃんけんを して、
+// かった ほうが さきに わざを だし、まけた ほうも たおれていなければ あとから だす（はんげき）。
+// あいこは どちらが さきか ランダム（スキル「はやわざ」なら さき）。
 // ✊グー＝はやい こうげき（ダメージ大）、✌️チョキ＝どく（ダメージ小＋どくの こうか）、
-// 🖐️パー＝まもり（その ターンの こうげきを 6わり へらして、へらした ぶんを はねかえす＋すこし かいふく）
+// 🖐️パー＝まもり（その ターンの こうげきを へらして、へらした ぶんを はねかえす＋すこし かいふく）
+// つかった わざは 0〜2ターン やすみ（わざごと）。わざは 3つで やすみは さいだい 2ターンなので、かならず 1つは つかえる。
 // ダメージは「こうげき × 50 ÷（50 ＋ ぼうぎょ）」の わりあい式。
-import { BOSSES, HANDS, HAND_IDS, PTYPES, SPECIES, favoriteHand, janken, type Hand, type PType } from './data';
-import { bossStats, movesFor, resistFrac, runStats, statsFor, type Move, type Run } from './state';
+import { BOSSES, HANDS, PTYPES, SPECIES, janken, type Hand, type PType } from './data';
+import { SKILLS } from './moves';
+import { bossMoves, bossStats, buildMove, resistFrac, runMoves, runStats, statsFor, startMoves, type Move, type Run } from './state';
 
 const K = 50;
 const CRIT_RATE = 0.05;
+const CRIT_MULT = 1.5;
 const WIN_CRIT_RATE = 0.3; // じゃんけんに かつと「いきおい」で きゅうしょに あたりやすい
 const WILD_SCALE = [0, 0.75, 0.85, 0.85]; // やせいの あいては すこし よわい（あかちゃんの うちは もっと よわい）
-const CRIT_MULT = 1.5;
-const DODGE_MAX = 0.2; // よける かくりつの さいだい
-const DODGE_SLOPE = 0.2; // はやさが あいての 2ばいで 20%
-const FAV_RATE = 0.6; // くせの 手を だす かくりつ
-const REFLECT = 1.0; // パーで へらした ダメージを そのまま はねかえす
+const MACHIBUSE = 1.6; // まちぶせ：かった とき
+const RENSOKU_EACH = 0.65; // れんぞく：1かいの つよさ
+const IKAKU = 0.25; // いかく：あいての こうげきを さげる
 
 interface Status {
   para: boolean;
@@ -39,12 +41,13 @@ export interface Fighter {
   hp: number;
   atk: number;
   def: number;
-  spd: number;
   res: number;
-  moves: Record<Hand, Move>;
-  resist: Partial<Record<PType, number>>;
-  fav: Hand;
-  shield: number; // パーで つくった まもり（その ターンに うける ダメージを へらす）
+  moves: Move[];
+  cooldown: number[]; // わざごとの のこり やすみ ターン
+  resist: Partial<Record<PType, number>>; // ボスの「この どくが ききにくい」
+  shield: number; // パーで つくった まもり（その ターンだけ）
+  shieldSkill: Move['skill'];
+  hiding: boolean; // かくれる（その ターンの こうげきを ぜんぶ よける）
   st: Status;
 }
 
@@ -60,83 +63,37 @@ export type BattleEvent =
 
 const newStatus = (): Status => ({ para: false, bleedTurns: 0, bleedDmg: 0, atkDown: 0, atkDownTurns: 0, defDown: 0, defDownTurns: 0 });
 
-export function dodgeChance(attackerSpd: number, defenderSpd: number): number {
-  if (attackerSpd <= 0) return DODGE_MAX;
-  return Math.min(DODGE_MAX, Math.max(0, ((defenderSpd - attackerSpd) / attackerSpd) * DODGE_SLOPE));
+function base(side: Side, name: string, species: string | null, level: number, hp: number, atk: number, def: number, res: number, moves: Move[]): Fighter {
+  return { side, name, species, bossIndex: null, level, maxHp: hp, hp, atk, def, res, moves, cooldown: moves.map(() => 0), resist: {}, shield: 0, shieldSkill: undefined, hiding: false, st: newStatus() };
 }
 
 export function playerFighter(r: Run): Fighter {
   const s = runStats(r);
-  return {
-    side: 'p',
-    name: SPECIES[r.species].name,
-    species: r.species,
-    bossIndex: null,
-    level: r.level,
-    maxHp: s.maxHp,
-    hp: Math.min(r.hp, s.maxHp),
-    atk: s.atk,
-    def: s.def,
-    spd: s.spd,
-    res: s.res,
-    moves: movesFor(r.species, r.stage),
-    resist: {},
-    fav: 'gu',
-    shield: 0,
-    st: newStatus(),
-  };
+  const f = base('p', SPECIES[r.species].name, r.species, r.level, s.maxHp, s.atk, s.def, s.res, runMoves(r));
+  f.hp = Math.min(r.hp, s.maxHp);
+  return f;
 }
 
 export function wildFighter(species: string, level: number, stage: number): Fighter {
   const s = statsFor(species, level);
-  const sp = SPECIES[species];
   const k = WILD_SCALE[Math.max(1, Math.min(3, stage))];
-  return {
-    side: 'e',
-    name: sp.name,
-    species,
-    bossIndex: null,
-    level,
-    maxHp: Math.round(s.maxHp * k),
-    hp: Math.round(s.maxHp * k),
-    atk: Math.round(s.atk * k),
-    def: s.def,
-    spd: s.spd,
-    res: s.res,
-    moves: movesFor(species, stage),
-    resist: {},
-    fav: favoriteHand(sp),
-    shield: 0,
-    st: newStatus(),
-  };
+  const moves = startMoves(species).map((m) => buildMove(m, species, stage));
+  return base('e', SPECIES[species].name, species, level, Math.round(s.maxHp * k), Math.round(s.atk * k), s.def, s.res, moves);
 }
 
 export function bossFighter(r: Run, bossIndex: number): Fighter {
   const b = BOSSES[bossIndex];
   const s = bossStats(r, bossIndex);
-  const mv = (h: Hand): Move => {
-    const m = b.moves[h];
-    return { hand: h, name: m.name, power: m.power, types: [], hits: m.hits, guard: h === 'pa' ? 0.6 : undefined, heal: h === 'pa' ? 0.06 : undefined };
-  };
-  return {
-    side: 'e',
-    name: b.name,
-    species: null,
-    bossIndex,
-    level: r.level + 2,
-    maxHp: s.maxHp,
-    hp: s.maxHp,
-    atk: s.atk,
-    def: s.def,
-    spd: s.spd,
-    res: s.res,
-    moves: { gu: mv('gu'), choki: mv('choki'), pa: mv('pa') },
-    resist: b.resist,
-    fav: b.fav,
-    shield: 0,
-    st: newStatus(),
-  };
+  const f = base('e', b.name, null, r.level + 2, s.maxHp, s.atk, s.def, s.res, bossMoves(b.id));
+  f.bossIndex = bossIndex;
+  f.resist = b.resist;
+  return f;
 }
+
+export const available = (u: Fighter): number[] => {
+  const a = u.moves.map((_, i) => i).filter((i) => u.cooldown[i] <= 0);
+  return a.length ? a : u.moves.map((_, i) => i); // ねんのため（ふつうは かならず 1つは のこる）
+};
 
 export class Duel {
   readonly me: Fighter;
@@ -151,11 +108,10 @@ export class Duel {
     this.foe = foe;
   }
 
-  // あいての 手：くせの 手が 60%、のこりは 20%ずつ
-  foeHand(): Hand {
-    if (Math.random() < FAV_RATE) return this.foe.fav;
-    const others = HAND_IDS.filter((h) => h !== this.foe.fav);
-    return others[Math.floor(Math.random() * others.length)];
+  // あいての わざ：つかえる わざから おなじ かくりつで
+  foeMove(): number {
+    const a = available(this.foe);
+    return a[Math.floor(Math.random() * a.length)];
   }
 
   private other(u: Fighter): Fighter {
@@ -180,91 +136,138 @@ export class Duel {
     }
   }
 
-  private act(u: Fighter, h: Hand, ev: BattleEvent[]): void {
+  // わざを だす。だせたら true（しびれて うごけない ときは false で、やすみも つかない）
+  private act(u: Fighter, mi: number, ev: BattleEvent[]): boolean {
     const t = this.other(u);
-    if (u.hp <= 0 || t.hp <= 0 || this.over) return;
+    if (u.hp <= 0 || t.hp <= 0 || this.over) return false;
     if (u.st.para) {
       u.st.para = false;
       ev.push({ kind: 'text', text: `${u.name}は しびれて うごけない！` });
-      return;
+      return false;
     }
-    const m = u.moves[h];
-    ev.push({ kind: 'text', text: `${u.name}の ${HANDS[h].icon}${m.name}！` });
-    if (h === 'pa') {
+    const m = u.moves[mi];
+    ev.push({ kind: 'text', text: `${u.name}の ${HANDS[m.hand].icon}${m.name}！` });
+    if (m.hand === 'pa') {
+      if (m.skill === 'kakureru') {
+        u.hiding = true;
+        ev.push({ kind: 'mark', side: u.side });
+        ev.push({ kind: 'text', text: `${u.name}は かくれた！` });
+        return true;
+      }
       u.shield = Math.max(u.shield, m.guard ?? 0.6);
+      u.shieldSkill = m.skill;
       const heal = Math.min(u.maxHp - u.hp, Math.round(u.maxHp * (m.heal ?? 0)));
       ev.push({ kind: 'mark', side: u.side });
       if (heal > 0) {
         u.hp += heal;
         ev.push({ kind: 'heal', side: u.side, amount: heal, hp: u.hp });
       }
-      ev.push({ kind: 'text', text: `${u.name}は まもりを かためた！` });
-      return;
+      if (m.skill === 'ikaku') {
+        t.st.atkDown = Math.max(t.st.atkDown, IKAKU);
+        t.st.atkDownTurns = Math.max(t.st.atkDownTurns, 2);
+        ev.push({ kind: 'mark', side: t.side });
+        ev.push({ kind: 'text', text: `${t.name}は こわがって こうげきが さがった！` });
+      } else ev.push({ kind: 'text', text: `${u.name}は まもりを かためた！` });
+      return true;
     }
-    if (Math.random() < dodgeChance(u.spd, t.spd)) {
+    if (t.hiding) {
       ev.push({ kind: 'dodge', side: t.side });
-      ev.push({ kind: 'text', text: `${t.name}は すばやく よけた！` });
-      return;
+      ev.push({ kind: 'text', text: `${t.name}が かくれていて あたらない！` });
+      return true;
     }
-    const cut = resistFrac(t.res); // どくたいせいで へる わりあい
-    const typeRes = m.types.length ? m.types.reduce((a, ty) => a + (t.resist[ty] ?? 1), 0) / m.types.length : 1;
-    const mult = m.types.length ? typeRes * (1 - cut / 2) : 1;
-    for (let i = 0; i < (m.hits ?? 1) && t.hp > 0; i++) {
-      let { amount, crit } = this.damage(u, t, m.power, mult);
+    const ignore = m.skill === 'taiseiwari';
+    const cut = ignore ? 0 : resistFrac(t.res); // どくたいせいで へる わりあい
+    const typeRes = m.types.length ? (ignore ? 1 : m.types.reduce((a, ty) => a + (t.resist[ty] ?? 1), 0) / m.types.length) : 1;
+    let mult = m.types.length ? typeRes * (1 - cut / 2) : 1;
+    if (m.skill === 'machibuse' && this.jankenWinner === u) mult *= MACHIBUSE;
+    const hits = m.hits ?? 1;
+    const each = hits > 1 ? m.power * RENSOKU_EACH : m.power;
+    for (let i = 0; i < hits && t.hp > 0 && u.hp > 0; i++) {
+      let { amount, crit } = this.damage(u, t, each, mult);
       let back = 0;
       if (t.shield > 0) {
-        const blocked = Math.round(amount * t.shield);
-        amount = Math.max(1, amount - blocked);
-        back = Math.max(1, Math.round(blocked * REFLECT));
+        if (m.skill === 'zusshiri') {
+          ev.push({ kind: 'text', text: 'ずっしり！ まもりを やぶった！' });
+        } else {
+          const blocked = Math.round(amount * t.shield);
+          amount = Math.max(1, amount - blocked);
+          back = Math.max(1, blocked);
+          ev.push({ kind: 'text', text: `${t.name}が うけとめた！` });
+        }
+        const skin = t.shieldSkill === 'dokuhifu' ? t.moves.find((x) => x.skill === 'dokuhifu') : undefined;
         t.shield = 0;
-        ev.push({ kind: 'text', text: `${t.name}が うけとめた！` });
+        if (skin) this.poison(skin, u, ev, true);
       }
       if (crit) ev.push({ kind: 'text', text: 'きゅうしょに あたった！' });
       this.hit(t, amount, crit, ev);
       if (back > 0 && u.hp > 0 && !this.over) {
-        ev.push({ kind: 'text', text: `はねかえした！` });
+        ev.push({ kind: 'text', text: 'はねかえした！' });
         this.hit(u, back, false, ev);
-        if (u.hp <= 0) return;
+        if (u.hp <= 0) return true;
       }
     }
-    if (h === 'choki' && t.hp > 0) this.poison(m, t, cut, ev);
+    if (m.hand === 'choki' && m.types.length && t.hp > 0) this.poison(m, t, ev, false);
+    return true;
   }
 
-  private poison(m: Move, t: Fighter, cut: number, ev: BattleEvent[]): void {
+  // どくの こうか。fromSkin は「どくのひふ」で はんげき した とき
+  private poison(m: Move, t: Fighter, ev: BattleEvent[], fromSkin: boolean): void {
+    if (!m.types.length || t.hp <= 0) return;
+    if (fromSkin) ev.push({ kind: 'text', text: `${t.name}は どくの ひふに さわって しまった！` });
+    const ignore = m.skill === 'taiseiwari';
+    const cut = ignore ? 0 : resistFrac(t.res);
+    const power = m.skill === 'moudoku' ? 2 : 1;
+    const turns = m.skill === 'jiwajiwa' ? 5 : 3;
+    const sure = m.skill === 'kakujitsu';
     for (const ty of new Set(m.types)) {
-      const r = (t.resist[ty] ?? 1) * (1 - cut);
+      const r = (ignore ? 1 : t.resist[ty] ?? 1) * (1 - cut);
       if (ty === 'shibire') {
-        if (Math.random() < 0.45 * r) {
+        const chance = sure ? Math.min(1, r * 1.5) : Math.min(0.9, 0.45 * r * power);
+        if (Math.random() < chance) {
           t.st.para = true;
           ev.push({ kind: 'mark', side: t.side });
           ev.push({ kind: 'text', text: `${t.name}は しびれて うごけなく なった！` });
         } else if (r < 0.7) ev.push({ kind: 'text', text: `${t.name}には しびれどくが ききにくい！` });
       } else if (ty === 'chi') {
-        t.st.bleedTurns = 3;
-        t.st.bleedDmg = Math.max(1, Math.round(t.maxHp * 0.06 * r));
+        t.st.bleedTurns = Math.max(t.st.bleedTurns, turns);
+        t.st.bleedDmg = Math.max(t.st.bleedDmg, Math.max(1, Math.round(t.maxHp * 0.06 * r * power)));
         ev.push({ kind: 'mark', side: t.side });
         ev.push({ kind: 'text', text: `${t.name}の {血|ち}が とまらなく なった！` });
       } else if (ty === 'itami') {
-        const amt = Math.min(0.5, 0.3 * r);
-        if (amt >= 0.1) {
-          t.st.atkDown = Math.max(t.st.atkDown, amt);
-          t.st.atkDownTurns = 3;
+        const amt = Math.min(0.6, 0.3 * r * power);
+        if (amt >= 0.1 || sure) {
+          t.st.atkDown = Math.max(t.st.atkDown, Math.max(amt, 0.15));
+          t.st.atkDownTurns = Math.max(t.st.atkDownTurns, turns);
           ev.push({ kind: 'mark', side: t.side });
           ev.push({ kind: 'text', text: `いたみで ${t.name}の こうげきが さがった！` });
         } else ev.push({ kind: 'text', text: `${t.name}には いたみどくが ききにくい！` });
       } else if (ty === 'kowashi') {
-        t.st.defDown = Math.max(t.st.defDown, Math.min(0.6, 0.35 * r));
-        t.st.defDownTurns = 3;
+        t.st.defDown = Math.max(t.st.defDown, Math.min(0.7, 0.35 * r * power));
+        t.st.defDownTurns = Math.max(t.st.defDownTurns, turns);
         ev.push({ kind: 'mark', side: t.side });
         ev.push({ kind: 'text', text: `${t.name}の ぼうぎょが さがった！` });
       }
     }
   }
 
-  private endRound(ev: BattleEvent[]): void {
-    // パーの まもりは その ターンだけ（まけて あとから だすと まにあわない）
-    this.me.shield = 0;
-    this.foe.shield = 0;
+  private endRound(ev: BattleEvent[], used: [Fighter, number][]): void {
+    // パーの まもり・かくれるは その ターンだけ
+    for (const u of [this.me, this.foe]) {
+      u.shield = 0;
+      u.shieldSkill = undefined;
+      u.hiding = false;
+    }
+    // わざの やすみ：ぜんぶ 1へらしてから、いま つかった わざに やすみを つける
+    for (const u of [this.me, this.foe]) u.cooldown = u.cooldown.map((c) => Math.max(0, c - 1));
+    for (const [u, mi] of used) {
+      const m = u.moves[mi];
+      u.cooldown[mi] = m.cd;
+      if (m.cd >= 2 && u.hp > 0)
+        ev.push({
+          kind: 'text',
+          text: m.types.length ? `${u.name}は どくを つかいきった！ つぎの どくが たまるまで やすみ` : `${u.name}は ちからを つかいきった！ ${m.name}は 2ターン やすみ`,
+        });
+    }
     for (const u of [this.me, this.foe]) {
       if (u.hp <= 0 || this.over) continue;
       const st = u.st;
@@ -272,6 +275,7 @@ export class Duel {
         ev.push({ kind: 'text', text: `どくで ${u.name}に ダメージ！` });
         this.hit(u, st.bleedDmg, false, ev);
         st.bleedTurns--;
+        if (st.bleedTurns === 0) st.bleedDmg = 0;
       }
       if (st.atkDownTurns > 0 && --st.atkDownTurns === 0) st.atkDown = 0;
       if (st.defDownTurns > 0 && --st.defDownTurns === 0) st.defDown = 0;
@@ -279,20 +283,31 @@ export class Duel {
     }
   }
 
-  turn(myHand: Hand, foeHand: Hand = this.foeHand()): BattleEvent[] {
+  turn(myMove: number, foeMove: number = this.foeMove()): BattleEvent[] {
     const ev: BattleEvent[] = [];
     if (this.over) return ev;
+    if (!available(this.me).includes(myMove)) myMove = available(this.me)[0];
+    if (!available(this.foe).includes(foeMove)) foeMove = available(this.foe)[0];
     this.turns++;
-    const result = janken(myHand, foeHand);
+    const mh = this.me.moves[myMove].hand;
+    const fh = this.foe.moves[foeMove].hand;
+    const result = janken(mh, fh);
     this.jankenWinner = result === 'win' ? this.me : result === 'lose' ? this.foe : null;
-    const meFirst = result === 'win' || (result === 'draw' && (this.me.spd > this.foe.spd || (this.me.spd === this.foe.spd && Math.random() < 0.5)));
-    ev.push({ kind: 'janken', me: myHand, foe: foeHand, result, first: meFirst ? 'p' : 'e' });
-    const order: [Fighter, Hand][] = meFirst ? [[this.me, myHand], [this.foe, foeHand]] : [[this.foe, foeHand], [this.me, myHand]];
-    for (const [u, h] of order) {
-      this.act(u, h, ev);
+    let meFirst: boolean;
+    if (result !== 'draw') meFirst = result === 'win';
+    else {
+      const mq = this.me.moves[myMove].skill === 'hayawaza';
+      const fq = this.foe.moves[foeMove].skill === 'hayawaza';
+      meFirst = mq !== fq ? mq : Math.random() < 0.5;
+    }
+    ev.push({ kind: 'janken', me: mh, foe: fh, result, first: meFirst ? 'p' : 'e' });
+    const order: [Fighter, number][] = meFirst ? [[this.me, myMove], [this.foe, foeMove]] : [[this.foe, foeMove], [this.me, myMove]];
+    const used: [Fighter, number][] = [];
+    for (const [u, mi] of order) {
+      if (this.act(u, mi, ev)) used.push([u, mi]);
       if (this.checkEnd(ev)) return ev;
     }
-    this.endRound(ev);
+    this.endRound(ev, used);
     return ev;
   }
 
@@ -310,6 +325,7 @@ export class Duel {
 
 export const markLabels = (u: Fighter): [string, string][] => {
   const m: [string, string][] = [];
+  if (u.hiding) m.push(['🫥かくれた', HANDS.pa.color]);
   if (u.shield > 0) m.push(['🖐️まもり', HANDS.pa.color]);
   if (u.st.para) m.push(['⚡しびれ', PTYPES.shibire.color]);
   if (u.st.bleedTurns > 0) m.push(['🩸', PTYPES.chi.color]);
@@ -317,3 +333,5 @@ export const markLabels = (u: Fighter): [string, string][] => {
   if (u.st.defDown > 0) m.push(['🧪↓', PTYPES.kowashi.color]);
   return m;
 };
+
+export const skillName = (m: Move): string => (m.skill ? SKILLS[m.skill].name : '');
