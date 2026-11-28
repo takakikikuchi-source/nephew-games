@@ -438,6 +438,103 @@ rt{font-size:.5em}
   .movehelp{font-size:clamp(14px,1.8vh,22px)}
   .bossbtn .bpic{width:clamp(48px,6vh,90px);height:clamp(48px,6vh,90px)}
 }
+
+/* ===== スマホの よこむき（たかさ 520px いか）：ぜんぶ 1がめんに おさめる ===== */
+@media (max-height:520px){
+  .topbar{padding:4px 10px;gap:8px;border-bottom-width:2px}
+  .topbar .who{font-size:15px}
+  .topbar .chip{font-size:14px;padding:3px 10px}
+  .topbar .tb{font-size:14px;padding:5px 10px}
+  .btn{font-size:16px;padding:8px 16px}
+  .page{padding:10px;gap:8px}
+  .page h2{margin:0;font-size:20px}
+  /* ホーム：いきもの ひだり・じょうほう みぎ */
+  .home-main{flex-direction:row;gap:8px;padding:8px}
+  .home-main .habitat{flex:0 0 36%}
+  .panel{min-width:0;padding:8px 10px;gap:5px;border-radius:16px}
+  .lvrow{gap:6px}
+  .lv{font-size:20px;padding:0 8px}
+  .stagebar{font-size:11px;gap:2px}
+  .stagebar span{padding:1px 5px}
+  .scards{grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
+  .scard,.scard.wide{grid-column:span 1;display:flex;flex-direction:column;padding:3px 7px;gap:1px;border-top:4px solid var(--sc);border-left:none;border-radius:10px}
+  .sname{font-size:11px}
+  .sval,.scard.wide .sval{font-size:18px;text-align:left}
+  .sbar{height:6px}
+  .sbonus{display:none}
+  .mtitle{font-size:11px}
+  .missions{gap:5px}
+  .mission{flex-direction:row;justify-content:center;gap:5px;padding:4px;font-size:14px;border-width:2px;box-shadow:0 3px 0 #b9add9}
+  .mission .ic{font-size:18px}
+  .mission .mx{font-size:11px;min-height:0}
+  .mymoves{gap:5px}
+  .mchip{padding:3px 4px;box-shadow:0 3px 0 #b9add9}
+  .mchip .mi{font-size:16px}
+  .mchip b{font-size:11px}
+  .mchip small{display:none}
+  .movehelp{font-size:11px;padding:4px 8px;line-height:1.4;border-left-width:4px}
+  .bossbtn{font-size:12px;padding:3px 10px;gap:8px}
+  .bossbtn .bpic{width:34px;height:34px}
+  .bossbtn b{font-size:14px}
+  .nextstage{font-size:11px;padding:4px}
+  .bubble{font-size:12px;padding:3px 10px;top:5px}
+  .name-tag{font-size:12px;padding:2px 10px;bottom:5px}
+  .blb{font-size:11px;padding:3px 8px}
+  .deco{font-size:22px}
+  /* バトル：パネルを ちいさく、わざボタンは よこに 3つ */
+  #s-battle .arena.duel{padding:5px 10px;gap:4px;grid-template-rows:minmax(0,.85fr) minmax(0,1.15fr)}
+  .duel .unit .pic{width:min(32vh,26vw)}
+  .ipanel{padding:5px 10px;gap:3px;border-radius:14px}
+  .ihead{font-size:15px}
+  .ihp{gap:6px}
+  .ihp .track{height:10px}
+  .ihplabel{font-size:11px}
+  .ipanel .uhpn{font-size:12px;min-width:4.6em}
+  .ipanel .marks{min-height:0}
+  .ipanel .marks span{font-size:11px;padding:1px 6px}
+  .ilabel{display:none}
+  .mlist{flex-direction:row;gap:4px}
+  .mrow{grid-template-columns:auto auto;gap:3px;padding:1px 6px;font-size:13px;border-left-width:4px}
+  .mrow .mn,.mrow small{display:none}
+  .cmdgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+  .cmdgrid .hand{grid-template-columns:1fr;justify-items:center;text-align:center;padding:3px 4px;gap:0;border-left-width:4px;box-shadow:0 3px 0 #b9add9}
+  .cmdgrid .hand .hk,.cmdgrid .hand small{display:none}
+  .cmdgrid .hand .hi{font-size:22px}
+  .cmdgrid .hand .htext{align-items:center}
+  .cmdgrid .hand .hn{font-size:11px;text-align:center}
+  .cmdgrid .hand .hcd{font-size:10px}
+  .cmdgrid .run{grid-column:1/-1;padding:2px;font-size:12px}
+  #s-battle .bpanel{padding:4px 10px;border-top-width:2px}
+  #s-battle .msg{font-size:14px;padding:4px 12px;border-radius:10px}
+  .jk{padding:8px 18px}
+  .jk-h{font-size:52px}
+  .jk-vs{font-size:18px}
+  .jk-res{font-size:17px}
+  .dmg{font-size:26px}
+  /* ガチャ・ずかん・おしまい・せってい */
+  .machine{width:auto;height:52vh}
+  .gacha-egg{width:110px;height:110px}
+  .hint{font-size:12px}
+  .tabs{gap:5px}
+  .tab{font-size:14px;padding:5px 10px}
+  .card{padding:8px;width:150px;border-radius:14px}
+  .card.zk{width:120px}
+  .card.zk .pic{width:80px;height:80px}
+  .card .ttl{font-size:14px}
+  .sect{font-size:16px}
+  .done-card{padding:8px 14px;font-size:14px}
+  .done-card .kansei{width:110px;height:110px}
+  .toggle{font-size:15px;padding:6px 12px}
+  /* ごはん・トレーニングの ダイアログ */
+  .foods{gap:6px}
+  .fe{font-size:32px}
+  .btn.food{font-size:14px;padding:6px}
+  .statpick{gap:6px}
+  .statpick .btn{font-size:14px;padding:6px}
+  .tbar{height:44px}
+  .zk-detail .bigpic{width:120px;height:120px}
+  .zk-detail{font-size:14px}
+}
 </style>
 </head>
 <body>

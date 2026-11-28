@@ -54,4 +54,20 @@ export const COMMON_CSS = `
 .dlg-body{font-size:22px;line-height:1.9}
 .dlg-btns{display:flex;gap:14px;justify-content:center;margin-top:22px;flex-wrap:wrap}
 rt{font-size:.5em}
+/* スマホ（おためし）：ダブルタップで ズームしない・タップの いろを けす */
+html{touch-action:manipulation;-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
+input,textarea{-webkit-user-select:text;user-select:text}
+/* スマホを たてに した ときは「よこむきに してね」 */
+@media (orientation:portrait) and (pointer:coarse) and (max-width:820px){
+  body::after{content:'📱 よこむきに してね';position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;
+    background:#141030;color:#fff;font-size:28px;font-weight:900;text-align:center;padding:20px}
+}
+/* よこが ひくい がめん（スマホの よこむき）：ダイアログを つめる */
+@media (max-height:520px){
+  .dlg{padding:12px 16px;border-radius:16px;max-height:94vh}
+  .dlg-body{font-size:16px;line-height:1.6}
+  .dlg-btns{margin-top:10px;gap:8px}
+  .dlg .btn{font-size:16px;padding:8px 16px}
+  #toast{font-size:15px;padding:8px 14px;bottom:10px}
+}
 `;

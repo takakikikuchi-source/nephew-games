@@ -14,6 +14,9 @@ import { TrainAudio, announceChime, atcBell, departMelody, doorCloseSound, doorO
 const MAX_DRIVE_SEC = 13.5 * 60;
 const driveMin = (c: Course) => Math.max(1, Math.round(new Sim(c, 'normal').wallEstimate / 60));
 
+// スマホ（ゆびで そうさ）かどうか。あんないの ことばを かえる
+const TOUCH = window.matchMedia('(pointer: coarse)').matches;
+
 const css = document.createElement('style');
 css.textContent = PROFILE_CSS + COMMON_CSS;
 document.head.appendChild(css);
@@ -437,7 +440,7 @@ async function beginBoarding(first: boolean): Promise<void> {
     await wait(600);
     closeDoors();
   } else {
-    guide('ドアを しめよう（🚪ボタン ／ Dキー）', 4000);
+    guide(TOUCH ? 'ドアを しめよう（🚪ボタン）' : 'ドアを しめよう（🚪ボタン ／ Dキー）', 4000);
     document.getElementById('door')?.classList.add('blink');
   }
 }
@@ -469,7 +472,7 @@ async function departSequence(): Promise<void> {
   g.announcedAuto = false;
   if (mode === 'easy') {
     g.sim.setBrake(0);
-    guide('W キーで アクセルを いれよう！', 4000, true);
+    guide(TOUCH ? 'アクセルを うえに あげよう！' : 'W キーで アクセルを いれよう！', 4000, true);
   } else {
     guide('↑で ブレーキを ゆるめて、W で アクセル！', 4000);
   }
@@ -581,6 +584,35 @@ function bindControls(): void {
   const el = scr('s-game');
   el.querySelectorAll<HTMLButtonElement>('[data-power]').forEach((b) => (b.onclick = () => setPower(Number(b.dataset.power))));
   el.querySelectorAll<HTMLButtonElement>('[data-brake]').forEach((b) => (b.onclick = () => setBrake(Number(b.dataset.brake))));
+  // スマホ：レバーを ゆびで なぞると、ゆびの いちの だんに うごく
+  for (const kind of ['power', 'brake'] as const) {
+    const lever = el.querySelector<HTMLElement>(`#${kind}-lever`);
+    if (!lever) continue;
+    const pick = (y: number) => {
+      let best: HTMLElement | null = null;
+      let bd = Infinity;
+      lever.querySelectorAll<HTMLElement>('.nl').forEach((r) => {
+        const b = r.getBoundingClientRect();
+        const d = Math.abs(b.top + b.height / 2 - y);
+        if (d < bd) {
+          bd = d;
+          best = r;
+        }
+      });
+      if (!best) return;
+      const n = Number((best as HTMLElement).dataset[kind]);
+      if (kind === 'power') setPower(n);
+      else setBrake(n);
+    };
+    lever.onpointerdown = (e) => {
+      if (e.pointerType === 'mouse') return; // マウスは いままでどおり クリック
+      lever.setPointerCapture(e.pointerId);
+      pick(e.clientY);
+    };
+    lever.onpointermove = (e) => {
+      if (lever.hasPointerCapture(e.pointerId)) pick(e.clientY);
+    };
+  }
   el.querySelector<HTMLButtonElement>('#door')!.onclick = () => toggleDoor();
   el.querySelector<HTMLButtonElement>('#ann')!.onclick = () => doAnnounce(true);
   el.querySelector<HTMLButtonElement>('#horn')!.onclick = () => horn();
@@ -662,18 +694,18 @@ function loop(): void {
     // ブレーキがかかったままアクセルを入れたとき
     if (!g.releaseHinted && sim.power > 0 && sim.brake > 0 && sim.kmh < 1 && mode !== 'hard') {
       g.releaseHinted = true;
-      guide('ブレーキが かかっているよ（↑で ゆるめる）', 3000, mode === 'easy');
+      guide(TOUCH ? 'ブレーキが かかっているよ（ブレーキを うえの ゆるめに）' : 'ブレーキが かかっているよ（↑で ゆるめる）', 3000, mode === 'easy');
     }
     // かんたん：アクセルを入れるのを忘れていたら
     if (mode === 'easy' && !g.powerHinted && sim.kmh < 1 && sim.power === 0 && sim.brake === 0 && d > 200 && g.t > g.guideUntil + 4) {
       g.powerHinted = true;
-      guide('W キーで アクセル！', 3000, true);
+      guide(TOUCH ? 'アクセルを うえに あげよう！' : 'W キーで アクセル！', 3000, true);
     }
     const decel = (mode === 'easy' ? 3.6 : 2.9) / 3.6;
     const brakeDist = (v * v) / (2 * decel);
     if (!g.brakeHinted && mode !== 'hard' && sim.kmh > 8 && d < brakeDist * 1.2 + 40) {
       g.brakeHinted = true;
-      if (mode === 'easy') guide('↓ キーで ブレーキ！ アクセルは S で きる', 4500, true);
+      if (mode === 'easy') guide(TOUCH ? 'アクセルを きって、ブレーキを したに！' : '↓ キーで ブレーキ！ アクセルは S で きる', 4500, true);
       else guide('そろそろ ブレーキ！', 3000, true);
     }
     g.nextOncoming -= dt;
@@ -800,7 +832,7 @@ function onArrive(): void {
     g.busy = false;
     if (mode === 'easy') openDoors();
     else {
-      guide('ドアを あけよう（🚪ボタン ／ Dキー）', 4000);
+      guide(TOUCH ? 'ドアを あけよう（🚪ボタン）' : 'ドアを あけよう（🚪ボタン ／ Dキー）', 4000);
       document.getElementById('door')?.classList.add('blink');
     }
   }, 2200);
