@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { PROFILE_CSS, renderProfilePicker, type Profile } from '../common/profiles';
 import { COMMON_CSS, dialog, sleep as wait } from '../common/ui';
-import { bindFullscreen, fullscreenButton, registerSW } from '../common/pwa';
+import { bindFullscreen, fullscreenButton, markPortraitAllowed, registerSW } from '../common/pwa';
 import { esc, rb } from '../common/text';
 import { bgm, getSoundSettings, setSoundSettings, sfx, speak, unlockAudio, type Song } from '../common/sound';
 import { load, save } from '../common/storage';
@@ -920,4 +920,5 @@ async function pauseMenu(): Promise<void> {
 }
 
 registerSW();
+markPortraitAllowed();
 renderTitle();

@@ -1,7 +1,7 @@
 // ベノムモンスター：画面と操作（v4：たまご 1こを 15ふんで 完成体まで そだてる・じゃんけんバトル）
 import { PROFILE_CSS, renderProfilePicker, type Profile } from '../common/profiles';
 import { COMMON_CSS, dialog, sleep as wait, toast } from '../common/ui';
-import { bindFullscreen, fullscreenButton, registerSW } from '../common/pwa';
+import { bindFullscreen, fullscreenButton, markPortraitAllowed, registerSW } from '../common/pwa';
 import { esc, rb } from '../common/text';
 import { bgm, getSoundSettings, setSoundSettings, sfx, unlockAudio, type Song } from '../common/sound';
 import { exportAll, importAll, remove } from '../common/storage';
@@ -946,4 +946,5 @@ function renderSettings(): void {
 }
 
 registerSW();
+markPortraitAllowed();
 renderTitle();

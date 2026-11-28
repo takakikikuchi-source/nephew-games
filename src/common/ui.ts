@@ -58,13 +58,13 @@ rt{font-size:.5em}
 html{touch-action:manipulation;-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
 input,textarea{-webkit-user-select:text;user-select:text}
 .fsbtn{position:fixed;right:12px;top:12px;z-index:50;font-size:16px;font-weight:700;padding:8px 14px;border-radius:12px;border:none;background:rgba(255,255,255,.92);color:#222;box-shadow:0 3px 0 rgba(0,0,0,.25)}
-/* スマホを たてに した ときは「よこむきに してね」 */
+/* スマホを たてに した ときは「よこむきに してね」（おためしページでは たてでも あそべるので ださない） */
 @media (orientation:portrait) and (pointer:coarse) and (max-width:820px){
-  body::after{content:'📱 よこむきに してね';position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;
+  html:not(.allow-portrait) body::after{content:'📱 よこむきに してね';position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;
     background:#141030;color:#fff;font-size:28px;font-weight:900;text-align:center;padding:20px}
 }
 /* よこが ひくい がめん（スマホの よこむき）：ダイアログを つめる */
-@media (max-height:520px){
+@media (max-height:520px), (orientation:portrait) and (max-width:820px){
   .dlg{padding:12px 16px;border-radius:16px;max-height:94vh}
   .dlg-body{font-size:16px;line-height:1.6}
   .dlg-btns{margin-top:10px;gap:8px}

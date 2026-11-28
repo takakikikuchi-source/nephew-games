@@ -171,7 +171,7 @@ kbd{display:inline-block;min-width:1.7em;text-align:center;padding:1px 6px;borde
 
 /* ===== スマホの よこむき（たかさ 520px いか） ===== */
 @media (pointer:coarse){.kh{display:none}}
-@media (max-height:520px){
+@media (max-height:520px), (orientation:portrait) and (max-width:820px){
   #s-game{--deskH:46vh}
   .desk{grid-template-columns:78px minmax(0,1.2fr) auto minmax(0,1fr) 78px;gap:6px;padding:5px 8px;border-top-width:3px}
   .mon.right{display:flex}
@@ -215,6 +215,23 @@ kbd{display:inline-block;min-width:1.7em;text-align:center;padding:1px 6px;borde
   .course{padding:8px 10px;gap:2px;border-radius:14px}
   .bigstars{font-size:40px}.score{font-size:18px}.rank{font-size:15px}
   .rtable{font-size:13px}.rtable th,.rtable td{padding:3px 8px}
+}
+
+/* ===== スマホの たてむき（おためしページ）：けしきが うえ・運転台が した ===== */
+@media (orientation:portrait) and (max-width:820px){
+  #s-game{--deskH:54vh}
+  .desk{grid-template-columns:70px minmax(0,1fr) 70px;grid-template-rows:minmax(0,1fr) auto auto;grid-template-areas:"pw g br" "pw ml br" "pw mr br";gap:6px}
+  .desk>.lw:first-child{grid-area:pw}
+  .desk>.mon:not(.right){grid-area:ml}
+  .desk>.gauge{grid-area:g;justify-self:center;height:100%;max-width:100%}
+  .desk>.mon.right{grid-area:mr}
+  .desk>.lw:last-child{grid-area:br}
+  .sbtns{flex-direction:row;justify-content:space-between}
+  .sbtn{flex:1;flex-direction:column;gap:0;font-size:18px}
+  .guide{white-space:normal;text-align:center;width:max-content;max-width:88vw;font-size:15px}
+  .modecard{width:80vw}
+  .board{width:92vw}
+  .ffbadge{right:auto;left:10px}
 }
 </style>
 </head>

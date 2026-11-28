@@ -448,7 +448,7 @@ rt{font-size:.5em}
 }
 
 /* ===== スマホの よこむき（たかさ 520px いか）：ぜんぶ 1がめんに おさめる ===== */
-@media (max-height:520px){
+@media (max-height:520px), (orientation:portrait) and (max-width:820px){
   .topbar{padding:4px 10px;gap:8px;border-bottom-width:2px}
   .topbar .who{font-size:15px}
   .topbar .chip{font-size:14px;padding:3px 10px}
@@ -542,6 +542,42 @@ rt{font-size:.5em}
   .tbar{height:44px}
   .zk-detail .bigpic{width:120px;height:120px}
   .zk-detail{font-size:14px}
+}
+
+/* ===== スマホの たてむき（おためしページ）：うえから じゅんに ならべる ===== */
+@media (orientation:portrait) and (max-width:820px){
+  .home-main{flex-direction:column}
+  .home-main .habitat{flex:0 0 27%}
+  .panel{gap:6px}
+  .topbar{gap:6px;padding:4px 8px}
+  .topbar .who{font-size:13px}
+  .topbar .chip{font-size:12px;padding:2px 8px}
+  .topbar .tb{font-size:12px;padding:4px 8px}
+  .mission{flex-direction:column;gap:1px;padding:5px 3px;font-size:13px}
+  .mission .ic{font-size:20px}
+  .mchip{padding:6px 4px}
+  .mchip .mi{font-size:22px}
+  .mchip b{font-size:12px}
+  .movehelp{font-size:13px}
+  .bossbtn .bpic{width:44px;height:44px}
+  /* バトル：あいての じょうほう → いきもの 2ひき → じぶんの じょうほうと わざボタン */
+  #s-battle .arena.duel{grid-template-columns:1fr 1fr;grid-template-rows:auto minmax(0,1fr) auto;grid-template-areas:"fi fi" "mp fp" "mi mi";padding:8px;gap:6px}
+  .duel .foe-info{grid-area:fi;justify-content:stretch}
+  .duel .foe-pic{grid-area:fp}
+  .duel .me-pic{grid-area:mp}
+  .duel .me-info{grid-area:mi;justify-content:stretch}
+  .ipanel{width:100%}
+  .duel .unit .pic{width:min(42vw,30vh)}
+  .cmdgrid .hand{padding:8px 4px}
+  .cmdgrid .hand .hi{font-size:30px}
+  .cmdgrid .hand .hn{font-size:13px}
+  .cmdgrid .run{padding:6px;font-size:13px}
+  #s-battle .msg{font-size:15px;min-height:2.6em}
+  .machine{height:36vh}
+  .cards{gap:8px}
+  .card.zk{width:27vw}
+  .done-card{flex-direction:column}
+  .zk-detail{flex-direction:column;align-items:center}
 }
 </style>
 </head>

@@ -11,6 +11,11 @@ export function registerSW(): void {
   });
 }
 
+// たてむき：おためしページ（claude.ai）では たてでも あそべる。GitHub Pages（ホーム画面の アプリ）は よこむき だけ
+export function markPortraitAllowed(): void {
+  if (!location.hostname.endsWith('github.io')) document.documentElement.classList.add('allow-portrait');
+}
+
 // ぜんがめんに できる スマホ だけ ボタンを だす（iPhone・claude.ai の なか・PC では でない）
 export function canFullscreen(): boolean {
   return (
