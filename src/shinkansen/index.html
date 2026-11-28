@@ -219,8 +219,16 @@ kbd{display:inline-block;min-width:1.7em;text-align:center;padding:1px 6px;borde
 
 /* ===== スマホの たてむき（おためしページ）：けしきが うえ・運転台が した ===== */
 @media (orientation:portrait) and (max-width:820px){
-  #s-game{--deskH:54vh}
-  .desk{grid-template-columns:70px minmax(0,1fr) 70px;grid-template-rows:minmax(0,1fr) auto auto;grid-template-areas:"pw g br" "pw ml br" "pw mr br";gap:6px}
+  /* 景色は 運転台より うえの らんだけに かく（カメラの まんなか＝線路と 地平線が らんの まんなかに くる）。景色 やく6わり・運転台 やく4わり */
+  #s-game{--deskH:40vh}
+  #view{height:calc(100% - var(--deskH))}
+  .desk{grid-template-columns:62px minmax(0,1fr) 62px;grid-template-rows:minmax(0,1fr) auto auto;grid-template-areas:"pw g br" "pw ml br" "pw mr br";gap:5px}
+  .mon{padding:3px 8px}
+  .mon b#nextname{font-size:17px}
+  .dist{font-size:14px}
+  .sbtn{font-size:16px;padding:2px 6px}
+  .sbtn span{font-size:11px}
+  .lt{font-size:11px}
   .desk>.lw:first-child{grid-area:pw}
   .desk>.mon:not(.right){grid-area:ml}
   .desk>.gauge{grid-area:g;justify-self:center;height:100%;max-width:100%}
