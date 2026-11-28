@@ -20,6 +20,8 @@ async function writeGame(id, js) {
 async function main() {
   await fs.mkdir(out, { recursive: true });
   await fs.copyFile(path.join(root, 'src', 'menu.html'), path.join(out, 'index.html'));
+  // スマホの ホーム画面に追加（GitHub Pages）ようの ファイル
+  for (const f of await fs.readdir(path.join(root, 'src', 'pwa'))) await fs.copyFile(path.join(root, 'src', 'pwa', f), path.join(out, f));
   for (const id of games) {
     try {
       await fs.access(path.join(root, 'src', id, 'main.ts'));

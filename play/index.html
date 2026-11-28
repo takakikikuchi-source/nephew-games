@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#141030">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="ゲーム">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+
 <title>ゲームメニュー</title>
 <style>
 *{box-sizing:border-box}
@@ -26,5 +34,9 @@ a.game span{font-size:96px;line-height:1}
     <a class="game shin" href="shinkansen.html"><span>🚄</span>しんかんせん<br>うんてんし</a>
   </div>
 </main>
+<script>
+// ホーム画面に追加して ひらいた とき、ネットが なくても あそべるように（GitHub Pages だけ）
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(function () {});
+</script>
 </body>
 </html>

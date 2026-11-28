@@ -1,6 +1,7 @@
 // ベノムモンスター：画面と操作（v4：たまご 1こを 15ふんで 完成体まで そだてる・じゃんけんバトル）
 import { PROFILE_CSS, renderProfilePicker, type Profile } from '../common/profiles';
 import { COMMON_CSS, dialog, sleep as wait, toast } from '../common/ui';
+import { bindFullscreen, fullscreenButton, registerSW } from '../common/pwa';
 import { esc, rb } from '../common/text';
 import { bgm, getSoundSettings, setSoundSettings, sfx, unlockAudio, type Song } from '../common/sound';
 import { exportAll, importAll, remove } from '../common/storage';
@@ -111,7 +112,8 @@ function renderTitle(): void {
     <h1 class="logo">ベノムモンスター</h1>
     <p class="logo-sub">もうどく いきもの いくせいゲーム</p>
     <button class="btn primary" id="start" style="font-size:28px;padding:16px 48px">はじめる</button>
-    <a href="index.html" style="color:#c9bdf0;font-size:16px">◀ ほかの ゲーム</a>`;
+    <a href="index.html" style="color:#c9bdf0;font-size:16px">◀ ほかの ゲーム</a>${fullscreenButton()}`;
+  bindFullscreen(el);
   el.querySelector<HTMLButtonElement>('#start')!.onclick = () => {
     unlockAudio();
     sfx('good');
@@ -943,4 +945,5 @@ function renderSettings(): void {
   show('s-settings');
 }
 
+registerSW();
 renderTitle();

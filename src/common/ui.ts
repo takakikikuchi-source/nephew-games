@@ -57,6 +57,7 @@ rt{font-size:.5em}
 /* スマホ（おためし）：ダブルタップで ズームしない・タップの いろを けす */
 html{touch-action:manipulation;-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
 input,textarea{-webkit-user-select:text;user-select:text}
+.fsbtn{position:fixed;right:12px;top:12px;z-index:50;font-size:16px;font-weight:700;padding:8px 14px;border-radius:12px;border:none;background:rgba(255,255,255,.92);color:#222;box-shadow:0 3px 0 rgba(0,0,0,.25)}
 /* スマホを たてに した ときは「よこむきに してね」 */
 @media (orientation:portrait) and (pointer:coarse) and (max-width:820px){
   body::after{content:'📱 よこむきに してね';position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;

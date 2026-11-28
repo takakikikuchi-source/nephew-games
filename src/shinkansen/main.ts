@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { PROFILE_CSS, renderProfilePicker, type Profile } from '../common/profiles';
 import { COMMON_CSS, dialog, sleep as wait } from '../common/ui';
+import { bindFullscreen, fullscreenButton, registerSW } from '../common/pwa';
 import { esc, rb } from '../common/text';
 import { bgm, getSoundSettings, setSoundSettings, sfx, speak, unlockAudio, type Song } from '../common/sound';
 import { load, save } from '../common/storage';
@@ -69,7 +70,8 @@ function renderTitle(): void {
     <div class="title-train">🚄</div>
     <h1 class="logo">しんかんせん<br>うんてんし</h1>
     <button class="btn primary big" id="start">はじめる</button>
-    <a href="index.html" style="color:#d0ebff;font-size:16px">◀ ほかの ゲーム</a>`;
+    <a href="index.html" style="color:#d0ebff;font-size:16px">◀ ほかの ゲーム</a>${fullscreenButton()}`;
+  bindFullscreen(el);
   el.querySelector<HTMLButtonElement>('#start')!.onclick = () => {
     unlockAudio();
     sfx('good');
@@ -917,4 +919,5 @@ async function pauseMenu(): Promise<void> {
   game.paused = false;
 }
 
+registerSW();
 renderTitle();
