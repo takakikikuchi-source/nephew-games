@@ -186,11 +186,26 @@ const moveChips = (r: G.Run) => G.runMoves(r).map((m, i) => moveCard(m, `data-mv
 function moveHelp(m: G.Move): string {
   const sk = m.skill ? SKILLS[m.skill] : null;
   const base = { gu: 'はやい こうげき（ダメージ 大）', choki: 'どく（ダメージ 小＋どくの こうか）', pa: 'まもり（うけとめて はねかえす＋かいふく）' }[m.hand];
-  return `${HANDS[m.hand].icon}${m.name}：${base}${sk ? `<br>〔${sk.name}〕${sk.desc}` : ''}<br>つかったら ${m.cd ? `${m.cd}ターン やすみ` : 'やすまず つかえる'}`;
+  return `<b>${HANDS[m.hand].icon}${m.name}</b>　${base}<br>${sk ? `<span class="sk">${sk.name}</span>${sk.desc}　` : ''}⏳ つかったら ${m.cd ? `${m.cd}ターン やすみ` : 'やすまず つかえる'}`;
 }
+// わざを おすと、したの わくに せつめいを だす（さいしょは 1つめ）
+const HAND_COLOR = { gu: '#ff6b6b', choki: '#be4bdb', pa: '#339af0' };
 function bindMoveChips(el: HTMLElement, r: G.Run): void {
   const ms = G.runMoves(r);
-  el.querySelectorAll<HTMLButtonElement>('.mymoves [data-mv]').forEach((b) => (b.onclick = () => toast(rb(moveHelp(ms[Number(b.dataset.mv)])), 4000)));
+  const box = el.querySelector<HTMLElement>('#movehelp');
+  const chips = [...el.querySelectorAll<HTMLButtonElement>('.mymoves [data-mv]')];
+  const select = (i: number) => {
+    chips.forEach((c, k) => c.classList.toggle('sel', k === i));
+    if (box) {
+      box.style.setProperty('--hc', HAND_COLOR[ms[i].hand]);
+      box.innerHTML = rb(moveHelp(ms[i]));
+    }
+  };
+  chips.forEach((b) => (b.onclick = () => {
+    sfx('click');
+    select(Number(b.dataset.mv));
+  }));
+  if (chips.length) select(0);
 }
 
 function bubbleText(r: G.Run): string {
@@ -226,8 +241,9 @@ function renderHome(): void {
         ${M('train', '🏋️', 'トレーニング', r.trained)}
         ${M('battle', '⚔️', 'やせいバトル', r.wins >= G.WINS_PER_STAGE, `${'●'.repeat(r.wins)}${'○'.repeat(G.WINS_PER_STAGE - r.wins)}`)}
       </div>
-      <div class="mtitle">わざ（タップで せつめい）</div>
+      <div class="mtitle">わざ（おすと せつめいが でるよ）</div>
       <div class="mymoves">${moveChips(r)}</div>
+      <div class="movehelp" id="movehelp"></div>
       ${
         r.stage === 3
           ? `<button class="bossbtn ${next === 'boss' ? 'ready' : ''}" id="boss" ${next === 'boss' ? '' : 'disabled'}>
@@ -483,13 +499,14 @@ function startBoss(r: G.Run): void {
 }
 
 
-function fighterCard(u: Fighter, art: string): string {
-  const habit = u.side === 'e' ? `<div class="habit">わざ：<span class="fmoves"></span></div>` : '';
-  return `<div class="unit ${u.side}" data-side="${u.side}">
-    <div class="uhp"><div class="unm"><span>${u.name}</span><span>Lv${u.level}</span></div>
-      <div class="track"><div class="fill"></div></div>
-      <div class="uhpn"></div><div class="marks"></div>${habit}</div>
-    <div class="pic">${art}</div></div>`;
+// じょうほう パネル（なまえ・HP・じょうたい・わざ）。じぶんの パネルには わざボタンが はいる
+function infoPanel(u: Fighter): string {
+  return `<div class="ipanel ${u.side}" data-side="${u.side}">
+    <div class="ihead"><span class="iname">${u.name}</span><span class="ilv">Lv${u.level}</span></div>
+    <div class="ihp"><span class="ihplabel">HP</span><div class="track"><div class="fill"></div></div><span class="uhpn"></span></div>
+    <div class="marks"></div>
+    ${u.side === 'e' ? '<div class="ilabel">あいての わざ</div><div class="mlist foe-moves"></div>' : '<div class="ilabel">どの わざを だす？ <small>（キーボードの 1・2・3 でも）</small></div><div class="cmdgrid" id="cmd"></div>'}
+  </div>`;
 }
 
 function runDuel(r: G.Run, duel: Duel, bossIndex: number | null): void {
@@ -501,34 +518,40 @@ function runDuel(r: G.Run, duel: Duel, bossIndex: number | null): void {
   const el = scr('s-battle');
   el.innerHTML = rb(`
   <div class="arena duel" style="background:${bg}">
-    <div class="side foe">${fighterCard(duel.foe, foeArt)}</div>
-    <div class="side me">${fighterCard(duel.me, creatureSvg(r.species, r.stage, true))}</div>
+    <div class="cell foe-info">${infoPanel(duel.foe)}</div>
+    <div class="cell foe-pic"><div class="unit e" data-side="e"><div class="pic">${foeArt}</div></div></div>
+    <div class="cell me-pic"><div class="unit p" data-side="p"><div class="pic">${creatureSvg(r.species, r.stage, true)}</div></div></div>
+    <div class="cell me-info">${infoPanel(duel.me)}</div>
     <div class="jk" id="jk"></div>
   </div>
   <div class="bpanel">
     <div class="msg" id="bmsg">${bossIndex != null ? `ボス ${BOSSES[bossIndex].name}が あらわれた！` : `やせいの ${duel.foe.name}が あらわれた！`}</div>
-    <div class="cmd hands" id="cmd"></div>
   </div>`);
   const msg = el.querySelector<HTMLElement>('#bmsg')!;
-  const cmd = el.querySelector<HTMLElement>('#cmd')!;
   const jk = el.querySelector<HTMLElement>('#jk')!;
   const unitEl = (side: Side) => el.querySelector<HTMLElement>(`.unit[data-side="${side}"]`)!;
+  const infoEl = (side: Side) => el.querySelector<HTMLElement>(`.ipanel[data-side="${side}"]`)!;
   const refresh = () => {
     for (const u of [duel.me, duel.foe]) {
-      const ue = unitEl(u.side);
+      const ie = infoEl(u.side);
       const pct = (u.hp / u.maxHp) * 100;
-      const fill = ue.querySelector<HTMLElement>('.fill')!;
+      const fill = ie.querySelector<HTMLElement>('.fill')!;
       fill.style.width = `${pct}%`;
       fill.className = `fill ${pct <= 20 ? 'crit' : pct <= 50 ? 'low' : ''}`;
-      ue.querySelector<HTMLElement>('.uhpn')!.textContent = `${u.hp}/${u.maxHp}`;
-      ue.querySelector<HTMLElement>('.marks')!.innerHTML = markLabels(u).map(([l, c]) => `<span style="background:${c}">${l}</span>`).join('');
-      ue.classList.toggle('ko', u.hp <= 0);
-      const fm = ue.querySelector<HTMLElement>('.fmoves');
-      if (fm)
-        fm.innerHTML = u.moves
-          .map((m, i) => `<span class="fm h-${m.hand} ${u.cooldown[i] > 0 ? 'rest' : ''}" title="${esc(m.name)}">${HANDS[m.hand].icon}${u.cooldown[i] > 0 ? `<i>⏳${u.cooldown[i]}</i>` : ''}</span>`)
-          .join('');
+      ie.querySelector<HTMLElement>('.uhpn')!.textContent = `${u.hp} / ${u.maxHp}`;
+      ie.querySelector<HTMLElement>('.marks')!.innerHTML = markLabels(u).map(([l, c]) => `<span style="background:${c}">${l}</span>`).join('');
+      unitEl(u.side).classList.toggle('ko', u.hp <= 0);
+      ie.classList.toggle('ko', u.hp <= 0);
     }
+    // あいての わざ（やすみちゅうは うすく）
+    infoEl('e').querySelector<HTMLElement>('.foe-moves')!.innerHTML = rb(
+      duel.foe.moves
+        .map((m, i) => {
+          const cd = duel.foe.cooldown[i];
+          return `<div class="mrow h-${m.hand} ${cd > 0 ? 'rest' : ''}"><span class="mi">${HANDS[m.hand].icon}</span><span class="mn">${esc(m.name)}</span><small>${m.skill ? `〔${SKILLS[m.skill].name}〕` : ''}</small><span class="mcd">${cd > 0 ? `⏳${cd}` : 'OK'}</span></div>`;
+        })
+        .join(''),
+    );
   };
   const floatText = (side: Side, text: string, cls: string) => {
     const rect = unitEl(side).querySelector<HTMLElement>('.pic')!.getBoundingClientRect();
@@ -541,24 +564,35 @@ function runDuel(r: G.Run, duel: Duel, bossIndex: number | null): void {
     setTimeout(() => d.remove(), 1000);
   };
   let busy = false;
+  // じぶんの わざボタン（うごいている あいだは おせない だけで、けさない）
+  const renderCmd = () => {
+    const cmd = el.querySelector<HTMLElement>('#cmd')!;
+    cmd.innerHTML = rb(
+      duel.me.moves
+        .map((m, i) => {
+          const cd = duel.me.cooldown[i];
+          const sk = m.skill ? SKILLS[m.skill] : null;
+          return `<button class="hand h-${m.hand}" data-mv="${i}" ${cd > 0 || busy || duel.over ? 'disabled' : ''}>
+            <span class="hk">${i + 1}</span><span class="hi">${HANDS[m.hand].icon}</span>
+            <span class="htext"><span class="hn">${esc(m.name)}</span><small>${sk ? `〔${sk.name}〕${sk.desc}` : HANDS[m.hand].role}</small></span>
+            <span class="hcd">${cd > 0 ? `⏳${cd}` : m.cd ? `やすみ${m.cd}` : ''}</span></button>`;
+        })
+        .join('') + `<button class="bmove run" data-run ${busy ? 'disabled' : ''}>🏃 にげる</button>`,
+    );
+    cmd.querySelectorAll<HTMLButtonElement>('[data-mv]').forEach((b) => (b.onclick = () => void choose(Number(b.dataset.mv))));
+    cmd.querySelector<HTMLButtonElement>('[data-run]')!.onclick = () => void runAway();
+  };
   const menu = () => {
     busy = false;
     const foeAv = available(duel.foe).map((i) => HANDS[duel.foe.moves[i].hand].icon).join('');
     msg.innerHTML = rb(`どの わざを だす？　<small>（あいてが いま だせる 手：${foeAv}）</small>`);
-    cmd.innerHTML = rb(
-      duel.me.moves.map((m, i) => {
-        const cd = duel.me.cooldown[i];
-        return `<button class="hand h-${m.hand}" data-mv="${i}" ${cd > 0 ? 'disabled' : ''}><span class="hi">${HANDS[m.hand].icon}</span><span class="hn">${esc(m.name)}</span><small>${m.skill ? `〔${SKILLS[m.skill].name}〕` : HANDS[m.hand].role}${m.cd ? `・やすみ${m.cd}` : ''}</small>${cd > 0 ? `<span class="cdbadge">⏳${cd}</span>` : ''}</button>`;
-      }).join('') + `<button class="bmove run" data-run>🏃 にげる</button>`,
-    );
-    cmd.querySelectorAll<HTMLButtonElement>('[data-mv]').forEach((b) => (b.onclick = () => void choose(Number(b.dataset.mv))));
-    cmd.querySelector<HTMLButtonElement>('[data-run]')!.onclick = () => void runAway();
+    renderCmd();
   };
   const choose = async (h: number) => {
     if (busy || duel.over || !available(duel.me).includes(h)) return;
     busy = true;
     sfx('click');
-    cmd.innerHTML = '';
+    renderCmd();
     await play(duel.turn(h));
     if (!duel.over) menu();
   };
@@ -649,10 +683,12 @@ function runDuel(r: G.Run, duel: Duel, bossIndex: number | null): void {
       sfx('lose');
       G.healFull(r);
       persist();
-      await dialog(`まけちゃった… HPは もとに もどったよ。<div class="factbox" style="background:#fff4d6">💡 あいての「くせ」を みて、かてる 手を だそう！ ${HANDS.gu.icon}は${HANDS.choki.icon}に、${HANDS.choki.icon}は${HANDS.pa.icon}に、${HANDS.pa.icon}は${HANDS.gu.icon}に かつよ。</div>`, [{ label: 'OK', value: 'ok', primary: true }]);
+      await dialog(`まけちゃった… HPは もとに もどったよ。<div class="factbox" style="background:#fff4d6">💡 あいての わざと やすみを みて、かてる 手を だそう！ ${HANDS.gu.icon}は${HANDS.choki.icon}に、${HANDS.choki.icon}は${HANDS.pa.icon}に、${HANDS.pa.icon}は${HANDS.gu.icon}に かつよ。</div>`, [{ label: 'OK', value: 'ok', primary: true }]);
     }
     renderHome();
   };
+  busy = true;
+  renderCmd();
   refresh();
   show('s-battle');
   setTimeout(menu, 900);
